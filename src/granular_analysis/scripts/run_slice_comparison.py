@@ -2,7 +2,6 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import trimesh
 
 from granular_analysis.config import (
     RESULTS_DIR,
@@ -10,6 +9,8 @@ from granular_analysis.config import (
     LZ,
     ALPHA_2D,
     FOLDER,
+    USE_PARTICLE_SKIP,
+    SKIP_FIRST_PARTICLES,
 )
 
 from granular_analysis.io.loader import (
@@ -21,29 +22,14 @@ from granular_analysis.analysis.porosity2d import (
     compute_slice_porosity,
 )
 
-from granular_analysis.utils.mesh import (
-    extract_3d_slice_areas,
-)
-
 
 # --------------------------------------------------
 # DATA LOADING
 # --------------------------------------------------
 
-def load_mesh():
-    mesh_path = os.path.join(RESULTS_DIR, "3d", "alpha.stl")
-
-    if not os.path.exists(mesh_path):
-        raise FileNotFoundError(
-            f"3D mesh not found:\n{mesh_path}"
-        )
-
-    return trimesh.load(mesh_path)
-
-
 def load_particles():
-    particles = load_last_frame(FOLDER)
-    return filter_particles(particles)
+    ellipsoids = load_last_frame(FOLDER)
+    return filter_particles(ellipsoids, USE_PARTICLE_SKIP, SKIP_FIRST_PARTICLES)
 
 
 # --------------------------------------------------
@@ -104,109 +90,47 @@ def load_or_compute_2d(particles):
 
 
 # --------------------------------------------------
-# MERGE
-# --------------------------------------------------
-
-def build_dataframe(df_2d, areas_3d):
-
-    df = pd.DataFrame(
-        {
-            "z": Z_LEVELS,
-            "A_3d": areas_3d,
-        }
-    )
-
-    df = df.merge(
-        df_2d,
-        on="z",
-        how="left",
-    )
-
-    if "A_alpha" in df.columns:
-
-        df["porosity_3d"] = np.where(
-            df["A_3d"] > 0,
-            (df["A_3d"] - df["A_alpha"]) / df["A_3d"],
-            np.nan,
-        )
-
-    return df
-
-
-# --------------------------------------------------
 # PLOTS
 # --------------------------------------------------
 
-def plot_area_profile(df, save_path):
-
+def _plot_profile(df, columns, labels, markers, title, ylabel, save_path):
+    """Generic depth-profile plotter."""
     fig, ax = plt.subplots(figsize=(8, 5))
-
-    if "A_ell" in df.columns:
-        ax.plot(
-            df["z"],
-            df["A_ell"],
-            "o-",
-            label="A_ell",
-        )
-
-    if "A_alpha" in df.columns:
-        ax.plot(
-            df["z"],
-            df["A_alpha"],
-            "s-",
-            label="A_alpha",
-        )
-
-    if "A_3d" in df.columns:
-        ax.plot(
-            df["z"],
-            df["A_3d"],
-            "^-",
-            label="A_3D",
-        )
-
+    for col, label, marker in zip(columns, labels, markers):
+        if col in df.columns:
+            ax.plot(df["z"], df[col], marker, label=label)
     ax.set_xlabel("z")
-    ax.set_ylabel("Area")
-    ax.set_title("Area Profile")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
     ax.grid(True, alpha=0.3)
     ax.legend()
-
     fig.tight_layout()
     fig.savefig(save_path, dpi=200)
-
     return fig
+
+
+def plot_area_profile(df, save_path):
+    return _plot_profile(
+        df,
+        columns=["A_ell", "A_alpha"],
+        labels=["A_ell", "A_alpha"],
+        markers=["o-", "s-"],
+        title="Area Profile",
+        ylabel="Area",
+        save_path=save_path,
+    )
 
 
 def plot_porosity_profile(df, save_path):
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-
-    if "porosity" in df.columns:
-        ax.plot(
-            df["z"],
-            df["porosity"],
-            "o-",
-            label="2D porosity",
-        )
-
-    if "porosity_3d" in df.columns:
-        ax.plot(
-            df["z"],
-            df["porosity_3d"],
-            "s-",
-            label="3D porosity",
-        )
-
-    ax.set_xlabel("z")
-    ax.set_ylabel("Porosity")
-    ax.set_title("Porosity Profile")
-    ax.grid(True, alpha=0.3)
-    ax.legend()
-
-    fig.tight_layout()
-    fig.savefig(save_path, dpi=200)
-
-    return fig
+    return _plot_profile(
+        df,
+        columns=["porosity"],
+        labels=["2D porosity"],
+        markers=["o-"],
+        title="Porosity Profile",
+        ylabel="Porosity",
+        save_path=save_path,
+    )
 
 
 # --------------------------------------------------
@@ -217,8 +141,10 @@ def print_statistics(df):
 
     print("\n=== AREA STATISTICS ===")
 
-    if "A_3d" in df.columns:
-        print(df["A_3d"].describe())
+    if "A_alpha" in df.columns:
+        p = df["A_alpha"].dropna()
+        if len(p):
+            print(f"A_alpha: mean={p.mean():.4f}, std={p.std():.4f}")
 
     print("\n=== POROSITY STATISTICS ===")
 
@@ -231,15 +157,6 @@ def print_statistics(df):
                 f"std={p.std():.4f}"
             )
 
-    if "porosity_3d" in df.columns:
-        p = df["porosity_3d"].dropna()
-
-        if len(p):
-            print(
-                f"3D: mean={p.mean():.4f}, "
-                f"std={p.std():.4f}"
-            )
-
 
 # --------------------------------------------------
 # MAIN
@@ -248,32 +165,17 @@ def print_statistics(df):
 def main():
 
     print("=" * 60)
-    print("2D / 3D Slice Comparison")
+    print("2D Slice Analysis")
     print("=" * 60)
 
-    mesh = load_mesh()
-
     particles = load_particles()
-
     print(f"Loaded particles: {len(particles)}")
 
-    areas_3d = extract_3d_slice_areas(
-        mesh,
-        Z_LEVELS,
-    )
-
-    df_2d = load_or_compute_2d(
-        particles,
-    )
-
-    df = build_dataframe(
-        df_2d,
-        areas_3d,
-    )
+    df = load_or_compute_2d(particles)
 
     outdir = os.path.join(
         RESULTS_DIR,
-        "comparison",
+        "slices",
     )
 
     os.makedirs(
@@ -283,7 +185,7 @@ def main():
 
     csv_path = os.path.join(
         outdir,
-        "comparison.csv",
+        "slice_summary.csv",
     )
 
     area_png = os.path.join(

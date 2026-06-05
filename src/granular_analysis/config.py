@@ -15,6 +15,7 @@ class Config:
     alpha_3d: float = 0.6
     use_particle_skip: bool = True
     skip_first_particles: int = 1000
+    d_eq: float = 1.0 
 
     def __post_init__(self):
         # frozen=True erlaubt normale Zuweisungen nicht,
@@ -66,7 +67,7 @@ def _env_path(var_name: str, fallback: Path) -> Path:
 
 _CONFIG = Config(
     data_folder=_env_path("GRANULAR_DATA_FOLDER", Path.cwd() / "data"),
-    results_dir=_env_path("GRANULAR_RESULTS_DIR", Path.home() / "results_granular_analysis"),
+    results_dir=_env_path("GRANULAR_RESULTS_DIR", Path(__file__).resolve().parent.parent.parent / "results_granular_analysis"),
 )
 
 FOLDER = str(_CONFIG.data_folder)
@@ -79,3 +80,4 @@ USE_PARTICLE_SKIP = _CONFIG.use_particle_skip
 SKIP_FIRST_PARTICLES = _CONFIG.skip_first_particles
 OUTDIR_2D = str(_CONFIG.outdir_2d)
 OUTDIR_3D = str(_CONFIG.outdir_3d)
+D_EQ = _CONFIG.d_eq          
