@@ -9,12 +9,12 @@ import pandas as pd
 from granular_analysis.config import (
     FOLDER,
     RESULTS_DIR,
-    D_EQ, 
+    D_EQ,
     USE_PARTICLE_SKIP,
     SKIP_FIRST_PARTICLES,
 )
 from granular_analysis.io.loader import get_all_bin_files
-from granular_analysis.read_ellipsoid_data import read_ellipsoid_trn
+from granular_analysis.io.read_ellipsoid_data import read_ellipsoid_trn
 from granular_analysis.analysis.energy.kinetic_energy import (
     kinetic_energy,
     total_kinetic_energy,

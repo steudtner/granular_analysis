@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any, List, Sequence, Union
 
-from granular_analysis.read_ellipsoid_data import read_ellipsoid_trn
+from granular_analysis.io.read_ellipsoid_data import read_ellipsoid_trn
 
 
 def load_last_frame(folder: Union[str, Path]) -> Any:
