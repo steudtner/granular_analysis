@@ -4,16 +4,8 @@ from pathlib import Path
 import numpy as np
 
 
-def _env_path(var_name: str, fallback: Path) -> Path:
-    env = os.getenv(var_name)
-    if env:
-        return Path(env).expanduser().resolve()
-    return fallback
-
-
-_PACKAGE_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-
-_CASE_ROOT = _PACKAGE_ROOT.parent
+# Case-Root: src/granular_analysis/config.py -> parent=granular_analysis -> parent=postproc -> parent=case
+_CASE_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 
 
 @dataclass(frozen=True)
@@ -21,7 +13,7 @@ class Config:
     data_folder: Path
     results_dir: Path
     lz: float = 2.5
-    z_step: float = 0.25
+    z_step: float = 0.1
     alpha_2d: float = 0.6
     alpha_3d: float = 0.6
     use_particle_skip: bool = True
@@ -51,14 +43,10 @@ class Config:
 
 
 _CONFIG = Config(
-    data_folder=_env_path(
-        "GRANULAR_DATA_FOLDER",
-        _CASE_ROOT / "results" / "ellipsoid" / "ellipsoid_trn"
-    ),
-    results_dir=_env_path(
-        "GRANULAR_RESULTS_DIR",
-        _CASE_ROOT / "results_granular_analysis"
-    ),
+    data_folder=os.getenv("GRANULAR_DATA_FOLDER", 
+                          _CASE_ROOT / "results" / "ellipsoid" / "ellipsoid_trn"),
+    results_dir=os.getenv("GRANULAR_RESULTS_DIR", 
+                           _CASE_ROOT / "results_granular_analysis"),
 )
 
 FOLDER = str(_CONFIG.data_folder)
