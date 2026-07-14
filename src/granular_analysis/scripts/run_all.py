@@ -12,6 +12,12 @@ The script caches intermediate results (e.g. CSV files). Re-running without
 --force therefore skips expensive re-computation and only regenerates plots.
 """
 
+import os
+# Set the data folder to be relative to the current directory where the script is run
+current_dir = os.getcwd()
+data_folder = os.path.join(current_dir, "results", "ellipsoid", "ellipsoid_trn")
+os.environ['GRANULAR_DATA_FOLDER'] = data_folder
+
 import argparse
 import sys
 import traceback
@@ -25,7 +31,7 @@ from granular_analysis.utils.logging_utils import suppress_noise
 
 PIPELINES = {
     "2d": run_2d,
-    "3d": run_3d,
+    #"3d": run_3d,
     "slices": run_slices,
     "energy": run_energy,
 }
@@ -47,6 +53,7 @@ def run_pipeline(name: str, func) -> bool:
 
 def main():
     suppress_noise()
+    
 
     parser = argparse.ArgumentParser(
         description=__doc__,

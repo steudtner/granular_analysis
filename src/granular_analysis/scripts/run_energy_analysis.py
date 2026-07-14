@@ -9,7 +9,6 @@ import pandas as pd
 from granular_analysis.config import (
     FOLDER,
     RESULTS_DIR,
-    D_EQ,
     USE_PARTICLE_SKIP,
     SKIP_FIRST_PARTICLES,
 )
@@ -28,13 +27,17 @@ from granular_analysis.utils.physics import (
     read_density_first_particle,
     load_mass_array,
 )
+from granular_analysis.utils.state_manager import load_state, save_state
 
 
 def _auto_input_paths():
-    project_root = Path(FOLDER).resolve().parent.parent.parent
+    # input files are one level above the case's postproc folder
+    # FOLDER = .../results/ellipsoid/ellipsoid_trn
+    # parent = ellipsoid, parent = results, parent = case
+    case_root = Path(FOLDER).resolve().parent.parent.parent
     return {
-        "global": project_root / "input.dat",
-        "ellipsoid": project_root / "input_ellipsoid_data.dat",
+        "global": case_root / "input.dat",
+        "ellipsoid": case_root / "input_ellipsoid_data.dat",
     }
 
 
@@ -51,7 +54,7 @@ def parse_args():
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Recompute the energy CSV even if it already exists.",
+        help="Recompute even if cached results exist.",
     )
     parser.add_argument(
         "--histogram-timesteps",
@@ -144,10 +147,21 @@ def compute_energy_dataframe(folder, use_physical_mass=True,
     })
 
 
-def main():
+def main(force: bool = False):
     args = parse_args()
     os.makedirs(RESULTS_DIR, exist_ok=True)
     energy_png = os.path.splitext(args.out)[0] + ".png"
+
+    # Check cache (but not for --force flag – handled below)
+    cached = None if (force or args.force) else load_state("energy", RESULTS_DIR)
+    if cached:
+        print("=" * 60)
+        print("Energy Analysis (cached)")
+        print("=" * 60)
+        for k, v in cached.items():
+            if k != "timestamp":
+                print(f"  {k} = {v}")
+        return
 
     skip_first = 0 if args.no_skip else (SKIP_FIRST_PARTICLES if USE_PARTICLE_SKIP else 0)
     use_physical = not args.no_physical_mass
@@ -179,6 +193,12 @@ def main():
 
     all_files = get_all_bin_files(FOLDER)
     hist_indices = _parse_histogram_timesteps(args.histogram_timesteps, len(all_files))
+
+    # Always include the last timestep histogram
+    if len(all_files) > 0:
+        last_index = len(all_files) - 1
+        if last_index not in hist_indices:
+            hist_indices.append(last_index)
 
     if hist_indices:
         hist_dir = Path(RESULTS_DIR) / "energy_histograms"
@@ -218,6 +238,15 @@ def main():
             print(f"  {out_path.name}")
 
         print(f"\nSaved histograms to {hist_dir}")
+
+    # Save to cache
+    stats = {
+        "E_max": float(df["kinetic_energy"].max()),
+        "E_final": float(df["kinetic_energy"].iloc[-1]),
+        "n_frames": len(df),
+        "use_physical_mass": use_physical,
+    }
+    save_state("energy", stats, RESULTS_DIR)
 
     print("\nEnergy analysis done")
 

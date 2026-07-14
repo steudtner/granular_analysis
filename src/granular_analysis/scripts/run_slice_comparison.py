@@ -12,15 +12,14 @@ from granular_analysis.config import (
     USE_PARTICLE_SKIP,
     SKIP_FIRST_PARTICLES,
 )
-
 from granular_analysis.io.loader import (
     load_last_frame,
     filter_particles,
 )
-
 from granular_analysis.analysis.porosity2d import (
     compute_slice_porosity,
 )
+from granular_analysis.utils.state_manager import load_state, save_state
 
 
 # --------------------------------------------------
@@ -40,7 +39,6 @@ def compute_2d_slice_summary(particles):
     records = []
 
     for z in Z_LEVELS:
-
         result = compute_slice_porosity(
             particles,
             z,
@@ -71,22 +69,6 @@ def compute_2d_slice_summary(particles):
         )
 
     return pd.DataFrame(records)
-
-
-def load_or_compute_2d(particles):
-
-    csv_path = os.path.join(
-        RESULTS_DIR,
-        "2d",
-        "porosity.csv",
-    )
-
-    if os.path.exists(csv_path):
-        print("Loading existing 2D results...")
-        return pd.read_csv(csv_path)
-
-    print("Recomputing 2D slice results...")
-    return compute_2d_slice_summary(particles)
 
 
 # --------------------------------------------------
@@ -138,7 +120,6 @@ def plot_porosity_profile(df, save_path):
 # --------------------------------------------------
 
 def print_statistics(df):
-
     print("\n=== AREA STATISTICS ===")
 
     if "A_alpha" in df.columns:
@@ -150,19 +131,25 @@ def print_statistics(df):
 
     if "porosity" in df.columns:
         p = df["porosity"].dropna()
-
         if len(p):
-            print(
-                f"2D: mean={p.mean():.4f}, "
-                f"std={p.std():.4f}"
-            )
+            print(f"2D: mean={p.mean():.4f}, std={p.std():.4f}")
 
 
 # --------------------------------------------------
 # MAIN
 # --------------------------------------------------
 
-def main():
+def main(force: bool = False):
+    # Check cache
+    cached = None if force else load_state("slices", RESULTS_DIR)
+    if cached:
+        print("=" * 60)
+        print("2D Slice Analysis (cached)")
+        print("=" * 60)
+        for k, v in cached.items():
+            if k != "timestamp":
+                print(f"  {k} = {v}")
+        return
 
     print("=" * 60)
     print("2D Slice Analysis")
@@ -171,54 +158,33 @@ def main():
     particles = load_particles()
     print(f"Loaded particles: {len(particles)}")
 
-    df = load_or_compute_2d(particles)
+    df = compute_2d_slice_summary(particles)
 
-    outdir = os.path.join(
-        RESULTS_DIR,
-        "slices",
-    )
+    outdir = os.path.join(RESULTS_DIR, "slices")
+    os.makedirs(outdir, exist_ok=True)
 
-    os.makedirs(
-        outdir,
-        exist_ok=True,
-    )
+    csv_path = os.path.join(outdir, "slice_summary.csv")
+    area_png = os.path.join(outdir, "area_profile.png")
+    porosity_png = os.path.join(outdir, "porosity_profile.png")
 
-    csv_path = os.path.join(
-        outdir,
-        "slice_summary.csv",
-    )
-
-    area_png = os.path.join(
-        outdir,
-        "area_profile.png",
-    )
-
-    porosity_png = os.path.join(
-        outdir,
-        "porosity_profile.png",
-    )
-
-    df.to_csv(
-        csv_path,
-        index=False,
-    )
-
-    plot_area_profile(
-        df,
-        area_png,
-    )
-
-    plot_porosity_profile(
-        df,
-        porosity_png,
-    )
-
+    df.to_csv(csv_path, index=False)
+    plot_area_profile(df, area_png)
+    plot_porosity_profile(df, porosity_png)
     print_statistics(df)
 
     print("\nSaved:")
     print(csv_path)
     print(area_png)
     print(porosity_png)
+
+    # Save to cache
+    stats = {
+        "n_levels": len(df),
+        "porosity_mean": float(df["porosity"].mean()),
+        "porosity_std": float(df["porosity"].std()),
+        "A_alpha_mean": float(df["A_alpha"].mean()) if "A_alpha" in df.columns else None,
+    }
+    save_state("slices", stats, RESULTS_DIR)
 
 
 if __name__ == "__main__":
