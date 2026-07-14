@@ -18,3 +18,18 @@ SKIP_FIRST_PARTICLES = 1000
 D_EQ = 1.0
 OUTDIR_2D = os.path.join(RESULTS_DIR, "ellipseSlices")
 OUTDIR_3D = os.path.join(RESULTS_DIR, "porosity3d")
+# ------------------------------------------------------------------ #
+#  Slope analysis
+# ------------------------------------------------------------------ #
+OUTDIR_SLOPE = os.path.join(RESULTS_DIR, "slope_analysis")
+SLOPE_XLIM = (0.0, 60.0)
+SLOPE_YLIM = (0.0, LZ)
+SLOPE_COLORS = ["blue", "orange", "purple", "brown"]
+
+# ------------------------------------------------------------------ #
+#  Slope analysis
+# ------------------------------------------------------------------ #
+OUTDIR_SLOPE = os.path.join(RESULTS_DIR, "slope_analysis")
+SLOPE_XLIM = (0.0, 60.0)
+SLOPE_YLIM = (0.0, LZ)
+SLOPE_COLORS = ["blue", "orange", "purple", "brown"]
