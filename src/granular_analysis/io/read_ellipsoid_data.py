@@ -55,6 +55,7 @@ def cli():
 
 
 def load_data(**kwargs):
+    import os
     import sys
 
     fname = f"{kwargs['path']}/ellipsoid_{kwargs['data']}/ell_{kwargs['data']}_{kwargs['counter']:06d}.bin"
@@ -65,19 +66,21 @@ def load_data(**kwargs):
     if kwargs['data'] == "trn":
         ellipsoid_data = read_ellipsoid_trn(fname)
     elif kwargs['data'] == "frc":
-        ellipsoid_data_rk1 = read_ellipsoid_frc(fname_rk1)
-        ellipsoid_data = ellipsoid_data_rk1
-        if not kwargs['dry']:
-            ellipsoid_data_rk2 = read_ellipsoid_frc(fname_rk2)
-            ellipsoid_data_rk3 = read_ellipsoid_frc(fname_rk3)
-            ellipsoid_data = (ellipsoid_data_rk1, ellipsoid_data_rk2, ellipsoid_data_rk3)
+        rk_files = [fname_rk1] if kwargs.get('dry', False) else [fname_rk1, fname_rk2, fname_rk3]
+        available = [f for f in rk_files if os.path.isfile(f)]
+        if not available:
+            raise FileNotFoundError(f"No RK files found for frame {kwargs['counter']} in {kwargs['path']}")
+
+        loaded = [read_ellipsoid_frc(f) for f in available]
+        ellipsoid_data = loaded[0] if len(loaded) == 1 else tuple(loaded)
     elif kwargs['data'] == "coll":
-        ellipsoid_data_rk1 = read_ellipsoid_coll(fname_rk1)
-        ellipsoid_data = ellipsoid_data_rk1
-        if not kwargs['dry']:
-            ellipsoid_data_rk2 = read_ellipsoid_coll(fname_rk2)
-            ellipsoid_data_rk3 = read_ellipsoid_coll(fname_rk3)
-            ellipsoid_data = (ellipsoid_data_rk1, ellipsoid_data_rk2, ellipsoid_data_rk3)
+        rk_files = [fname_rk1] if kwargs.get('dry', False) else [fname_rk1, fname_rk2, fname_rk3]
+        available = [f for f in rk_files if os.path.isfile(f)]
+        if not available:
+            raise FileNotFoundError(f"No RK files found for frame {kwargs['counter']} in {kwargs['path']}")
+
+        loaded = [read_ellipsoid_coll(f) for f in available]
+        ellipsoid_data = loaded[0] if len(loaded) == 1 else tuple(loaded)
     else:
         print("\n 'data' must be in ['trn', 'frc', 'coll']")
         sys.exit(1)

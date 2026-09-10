@@ -63,6 +63,120 @@ def get_all_bin_paths(folder: Union[str, Path]) -> List[Path]:
     return files
 
 
+def load_frame(folder: Union[str, Path], frame: Union[None, int, str] = None) -> Any:
+    """Load a specific ``*.bin`` frame from *folder*.
+
+    - If *frame* is ``None``, returns the last frame (legacy behavior).
+    - If *frame* is an ``int``, selects the frame by index from the sorted list
+      (0-based). Negative indices are supported (like Python lists).
+    - If *frame* is a ``str`` and matches a filename in *folder*, that file
+      is loaded.
+    """
+    folder = Path(folder)
+    if not folder.is_dir():
+        raise NotADirectoryError(f"Not a directory: {folder.resolve()}")
+
+    files = sorted(folder.glob("*.bin"))
+    if not files:
+        raise FileNotFoundError(f"No .bin files found in: {folder.resolve()}")
+
+    # None -> last
+    if frame is None:
+        target = files[-1]
+    elif isinstance(frame, int):
+        idx = frame
+        # support negative indices
+        if idx < 0:
+            idx = len(files) + idx
+        if idx < 0 or idx >= len(files):
+            raise IndexError(f"Frame index {frame} out of range (0..{len(files)-1})")
+        target = files[idx]
+    else:
+        # string: try exact match or basename
+        s = str(frame)
+        # try absolute path
+        p = Path(s)
+        if p.is_file():
+            target = p
+        else:
+            # match by name
+            matches = [f for f in files if f.name == s]
+            if matches:
+                target = matches[0]
+            else:
+                raise FileNotFoundError(f"No matching .bin file for '{s}' in {folder}")
+
+    return read_ellipsoid_trn(str(target))
+
+
+def _read_bin_time(fname: Union[str, Path]) -> float:
+    """Read only the time value from a trn ``.bin`` file without parsing all ellipsoids."""
+    from scipy.io import FortranFile
+
+    with FortranFile(str(fname), 'r') as f:
+        try:
+            _ = f.read_record('i4')  # Nell
+            t = f.read_record('f8')[0]
+            return float(t)
+        except Exception as exc:
+            raise RuntimeError(f"Failed to read time from {fname}: {exc}")
+
+
+def load_frame_by_time(folder: Union[str, Path], time_value: float, mode: str = 'nearest') -> Any:
+    """Load the frame whose timestamp best matches *time_value*.
+
+    - *mode* in {'nearest', 'before', 'after'} selects matching strategy.
+    """
+    folder = Path(folder)
+    if not folder.is_dir():
+        raise NotADirectoryError(f"Not a directory: {folder.resolve()}")
+
+    files = sorted(folder.glob("*.bin"))
+    if not files:
+        raise FileNotFoundError(f"No .bin files found in: {folder.resolve()}")
+
+    times = []
+    for f in files:
+        try:
+            times.append((_read_bin_time(f), f))
+        except Exception:
+            # skip unreadable files
+            continue
+
+    if not times:
+        raise RuntimeError(f"No readable .bin times in: {folder}")
+
+    # sort by time
+    times.sort(key=lambda x: x[0])
+    ts = [t for t, _ in times]
+
+    import bisect
+
+    pos = bisect.bisect_left(ts, time_value)
+    choice = None
+    if mode == 'nearest':
+        if pos == 0:
+            choice = times[0][1]
+        elif pos == len(ts):
+            choice = times[-1][1]
+        else:
+            before = times[pos - 1]
+            after = times[pos]
+            choice = before[1] if abs(before[0] - time_value) <= abs(after[0] - time_value) else after[1]
+    elif mode == 'before':
+        if pos == 0:
+            raise IndexError(f"No frame before time {time_value}")
+        choice = times[pos - 1][1]
+    elif mode == 'after':
+        if pos == len(ts):
+            raise IndexError(f"No frame after time {time_value}")
+        choice = times[pos][1]
+    else:
+        raise ValueError("mode must be one of 'nearest','before','after'")
+
+    return read_ellipsoid_trn(str(choice))
+
+
 def filter_particles(data: Sequence[Any], *args, skip_first: int = 0) -> Sequence[Any]:
     """Return ellipsoid data, optionally skipping the first *n* records.
     

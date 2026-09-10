@@ -1,160 +1,246 @@
-"""Run segmented slope analysis using R's segmented package via subprocess."""
+#!/usr/bin/env python3
+"""Run the segmented‑regression (slope) analysis.
 
+* Locate the CSV that contains the (x, z_max) data produced by the
+  α‑shape step.
+* Normalise its column names to `x` and `z_max` (the rest of the code
+  expects exactly these names).
+* Call the R script that fits the segmented models.
+* Plot all models (including breakpoints) using the existing
+  `slope_plots.py`.
+"""
 import os
-import sys
+import glob
 import subprocess
-import argparse
-import numpy as np
 import pandas as pd
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 
 from granular_analysis.config import RESULTS_DIR
-
-# Fallback paths for HPC where PATH gets messed up by virtualenvs
-RSCRIPT_CANDIDATES = [
-    "/software/rome/r2026/R/4.5.1-gfbf-2025a/bin/Rscript",
-    "/software/rome/r2026/R/4.5.1/bin/Rscript",
-    "Rscript"
-]
-
-def _plot_single_model(x, z, model_row, out_path, xlim=(0, 60), ylim=(0, 20), color="blue", dpi=600):
-    """Create a single plot from R results."""
-    fig, ax = plt.subplots(figsize=(8, 3))
-    ax.scatter(x, z, s=10, c="black", zorder=1)
-
-    xticks = np.arange(xlim[0], xlim[1] + 0.01, 5)
-    yticks = np.arange(ylim[0], ylim[1] + 0.01, 5)
-    ax.set_xticks(xticks)
-    ax.set_yticks(yticks)
-    ax.grid(True, which="major", linestyle=":", color="lightgray", linewidth=0.5, zorder=0)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-
-    x_pred = [float(v) for v in str(model_row["x_pred"]).split(";")]
-    y_pred = [float(v) for v in str(model_row["y_pred"]).split(";")]
-    ax.plot(x_pred, y_pred, color=color, linewidth=3, zorder=2)
-
-    if model_row["n_breakpoints"] > 0:
-        bps = [float(v) for v in str(model_row["breakpoints"]).split(";")]
-        for bp in bps:
-            ax.axvline(x=bp, color="black", linestyle="--", linewidth=1.5, zorder=1)
-
-    slopes = [float(v) for v in str(model_row["slopes"]).split(";")]
-    angles = [float(v) for v in str(model_row["angles_deg"]).split(";")]
-    y_start = ylim[1]
-    y_gap = (ylim[1] - ylim[0]) * 0.07
-    for i, (m, a) in enumerate(zip(slopes, angles)):
-        label = (rf"$m_{{{i+1}}} = {m:.2f},\; \alpha_{{{i+1}}} = {a:.1f}^\circ$")
-        ax.text(xlim[1], y_start - i * y_gap, label, ha="right", va="top", fontsize=10)
-
-    ax.text(xlim[0], np.mean(ylim), f"AIC={model_row['aic']:.1f}, BIC={model_row['bic']:.1f}",
-            ha="left", va="center", color="red", fontsize=9)
-
-    ax.set_xlabel(r"$x / D_{Eq}$", fontsize=14)
-    ax.set_ylabel(r"$z / D_{Eq}$", fontsize=14)
-    ax.set_xlim(*xlim)
-    ax.set_ylim(*ylim)
-    ax.tick_params(axis="both", labelsize=11)
-
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=dpi)
-    plt.close()
+from granular_analysis.utils.state_manager import load_state, save_state
+from granular_analysis.plotting.slope_plots import plot_all_models_from_csv
 
 
-def main(csv_path=None, xlim=None, ylim=None, force=False):
-    """Run the R slope analysis and generate Python plots."""
+# ----------------------------------------------------------------------
+# Helper: read the z‑value that was used for the exact‑slice plot
+# ----------------------------------------------------------------------
+def _read_last_z() -> float:
+    """
+    Try to infer the slice‑z value from an existing CSV.
+    If we can’t find it we simply return the default (2.5) – the
+    caller will overwrite it if needed.
+    """
+    # The α‑shape stage writes either
+    #   alphashape_last_timestep.csv
+    # or a slice‑specific file:
+    #   alphashape_slice_<z>.csv
+    patterns = [
+        os.path.join(RESULTS_DIR, "alphashape_last_timestep.csv"),
+        os.path.join(RESULTS_DIR, "alphashape_slice_*.csv"),
+    ]
+
+    for pat in patterns:
+        for p in sorted(glob.glob(pat)):
+            try:
+                df = pd.read_csv(p, nrows=5)   # read a few rows only
+                # Possible column names for the slice coordinate
+                if "z" in df.columns:
+                    return float(df["z"].iloc[0])
+                if "z_center" in df.columns:
+                    return float(df["z_center"].iloc[0])
+                if "z_max" in df.columns:
+                    return float(df["z_max"].iloc[0])
+            except Exception:
+                # If the file is malformed, just skip it
+                continue
+
+    # Fallback – the default that the CLI uses when nothing is found
+    return 2.5
+
+
+# ----------------------------------------------------------------------
+# Helper: locate the CSV that contains the (x, z_max) data
+# ----------------------------------------------------------------------
+def _find_input_csv() -> str:
+    """
+    The α‑shape step can produce two different CSV names.
+    We try both and return the first one that exists.
+    """
+    # 1️⃣  The generic “last timestep” file
+    candidate1 = os.path.join(RESULTS_DIR, "alphashape_last_timestep.csv")
+    if os.path.isfile(candidate1):
+        return candidate1
+
+    # 2️⃣  The slice‑specific file that matches the exact‑slice z value
+    #     (e.g. alphashape_slice_1.25.csv)
+    z_val = _read_last_z()
+    candidate2 = os.path.join(
+        RESULTS_DIR,
+        f"alphashape_slice_{z_val:.2f}.csv"
+    )
+    if os.path.isfile(candidate2):
+        return candidate2
+
+    # If we reach this point we couldn't locate any file – raise a clear error
+    raise FileNotFoundError(
+        "Could not locate a CSV with slice data. "
+        f"Tried: {candidate1}, {candidate2}"
+    )
+
+
+# ----------------------------------------------------------------------
+# Helper: rename columns so the rest of the pipeline can use ``x`` and ``z_max``
+# ----------------------------------------------------------------------
+def _load_and_normalise_slice(csv_path: str) -> pd.DataFrame:
+    """
+    Load the CSV that comes from the α‑shape step.
+    The file is *header‑less* and contains exactly two columns:
+        column 0 → x
+        column 1 → z_max
+    This function reads it accordingly and guarantees that the
+    resulting DataFrame has the canonical column names ``x`` and ``z_max``.
+    """
+    # -------------------------------------------------------------
+    # 1️⃣  Try the ordinary way first (in case a header *does* exist)
+    # -------------------------------------------------------------
+    try:
+        df = pd.read_csv(csv_path)
+        # If we got *any* column named “x” or “z” we can keep it.
+        # Otherwise we fall through to the header‑less branch.
+        if ("x" in df.columns) and ("z_max" in df.columns):
+            return df
+    except Exception:
+        # If pandas raises (e.g. empty file) we simply go to the
+        # header‑less branch – the fallback will still work.
+        pass
+
+    # -------------------------------------------------------------
+    # 2️⃣  Header‑less file → read with `header=None` and assign names
+    # -------------------------------------------------------------
+    try:
+        df = pd.read_csv(csv_path, header=None, names=["x", "z_max"])
+        # Verify that we really got two columns
+        if df.shape[1] != 2:
+            raise ValueError(
+                f"Expected 2 columns after forced rename, got {df.shape[1]}"
+            )
+        print(
+            f"🔧  CSV had no header – forced column names: ['x', 'z_max'] "
+            f"(rows={len(df)})"
+        )
+        return df
+    except Exception as exc:
+        # Re‑raise a clear error that will be caught by the caller
+        raise RuntimeError(
+            f"Failed to read/normalise CSV '{csv_path}': {exc}"
+        ) from exc
+
+
+# ----------------------------------------------------------------------
+# Main driver
+# ----------------------------------------------------------------------
+def main(force: bool = False):
+    # ------------------------------------------------------------------
+    # 1️⃣  Locate the slice CSV and normalise its column names
+    # ------------------------------------------------------------------
+    try:
+        csv_path = _find_input_csv()
+    except FileNotFoundError as e:
+        print(f"❌  {e}")
+        return
+
+    try:
+        data_df = _load_and_normalise_slice(csv_path)
+    except Exception as exc:
+        print(f"❌  Failed to read/normalise CSV '{csv_path}': {exc}")
+        return
+
+    print(
+        f"✅  Loaded slice data from {csv_path} "
+        f"({len(data_df)} rows, columns={list(data_df.columns)})"
+    )
+
+    # ------------------------------------------------------------------
+    # 2️⃣  Cache handling (unchanged logic, just using the new DataFrame)
+    # ------------------------------------------------------------------
+    cached = None if force else load_state("slope", RESULTS_DIR)
+    if cached:
+        print("Slope analysis result (cached):")
+        for k, v in cached.items():
+            if k != "timestamp":
+                print(f"  {k} = {v}")
+
+        results_path = os.path.join(
+            RESULTS_DIR, "slope_analysis", "slope_results_R.csv"
+        )
+        if os.path.isfile(results_path):
+            plot_all_models_from_csv(
+                results_path,
+                os.path.join(RESULTS_DIR, "slope_analysis"),
+                data_df["x"].values,
+                data_df["z_max"].values,
+            )
+        return
+
+    # ------------------------------------------------------------------
+    # 3️⃣  Run the R script
+    # ------------------------------------------------------------------
     out_dir = os.path.join(RESULTS_DIR, "slope_analysis")
     os.makedirs(out_dir, exist_ok=True)
 
-    if csv_path is None:
-        csv_path = os.path.join(RESULTS_DIR, "alphashape_last_timestep.csv")
-    if xlim is None:
-        xlim = (0.0, 60.0)
-    if ylim is None:
-        ylim = (0.0, 20.0)
-
-    print(f"Slope Analysis (R): Input CSV = {csv_path}")
-    print(f"Slope Analysis (R): Output dir = {out_dir}")
-
-    if not os.path.exists(csv_path):
-        print(f"ERROR: CSV file not found: {csv_path}")
+    r_script = os.path.join(
+        os.path.dirname(__file__), "slope_analysis.R"
+    )
+    if not os.path.isfile(r_script):
+        print(f"❌  R script not found at {r_script}")
         return
 
-    # --- Find Rscript ---
-    rscript_path = None
-    for candidate in RSCRIPT_CANDIDATES:
-        try:
-            test = subprocess.run([candidate, "--version"], capture_output=True)
-            if test.returncode == 0:
-                rscript_path = candidate
-                break
-        except FileNotFoundError:
-            continue
-            
-    if not rscript_path:
-        print("ERROR: Could not find Rscript. Please load R module first: module load R/4.5.1", file=sys.stderr)
-        return
+    cmd = [
+        "/software/rome/r2026/R/4.5.1-gfbf-2025a/bin/Rscript",
+        r_script,
+        csv_path,
+        out_dir,
+    ]
 
-    # --- Run R script via subprocess ---
-    r_script = os.path.join(os.path.dirname(__file__), "slope_analysis.R")
-    
-    print(f"Running R script with: {rscript_path}")
+    print("\n🔧  Calling R script:")
+    print("   " + " ".join(cmd))
     try:
-        result = subprocess.run(
-            [rscript_path, r_script, csv_path, out_dir],
-            capture_output=True, text=True, check=True
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
         )
-        print(result.stdout)
-        if result.stderr:
-            print("R warnings:", result.stderr, file=sys.stderr)
+        print("\nR stdout:")
+        print(proc.stdout)
+        if proc.stderr:
+            print("\nR warnings / stderr:")
+            print(proc.stderr)
     except subprocess.CalledProcessError as e:
-        print(f"ERROR running R script: {e}", file=sys.stderr)
-        print(e.stderr, file=sys.stderr)
+        print(f"\n❌  Rscript failed (rc={e.returncode})")
+        print(e.stdout)
+        print(e.stderr)
         return
 
-    # --- Read R results ---
-    r_results_path = os.path.join(out_dir, "slope_results_R.csv")
-    if not os.path.exists(r_results_path):
-        print(f"ERROR: R results not found: {r_results_path}")
+    # ------------------------------------------------------------------
+    # 4️⃣  Plot the results that the R script just created
+    # ------------------------------------------------------------------
+    results_path = os.path.join(out_dir, "slope_results_R.csv")
+    if not os.path.isfile(results_path):
+        print(f"❌  Expected results CSV not found: {results_path}")
         return
 
-    r_df = pd.read_csv(r_results_path)
-    print(f"\nLoaded R results: {len(r_df)} models")
+    print(f"\n📊  Plotting {len(pd.read_csv(results_path))} models …")
+    plot_all_models_from_csv(
+        results_path,
+        out_dir,
+        data_df["x"].values,
+        data_df["z_max"].values,
+    )
 
-    print("\n" + "=" * 55)
-    print("SEGMENTED REGRESSION RESULTS (R)")
-    print("=" * 55)
-    print(f"{'Model':<15} {'AIC':>10} {'BIC':>10} {'Slopes':>20}")
-    print("-" * 55)
-    for _, row in r_df.iterrows():
-        slopes_str = str(row["slopes"]).replace(";", ", ")
-        print(f"{str(row['model']):<15} {row['aic']:>10.1f} {row['bic']:>10.1f}   {slopes_str}")
+    # ------------------------------------------------------------------
+    # 5️⃣  Save a tiny state file so the next run can skip the heavy work
+    # ------------------------------------------------------------------
+    save_state("slope", {"status": "completed"}, RESULTS_DIR)
 
-    best_aic = r_df.loc[r_df["aic"].idxmin()]
-    best_bic = r_df.loc[r_df["bic"].idxmin()]
-    print(f"\nBest model (AIC): {best_aic['model']}")
-    print(f"Best model (BIC): {best_bic['model']}")
-
-    # --- Load data for scatter plot ---
-    data_df = pd.read_csv(csv_path, names=["x", "z_max"], header=None)
-    data_df = data_df[np.isfinite(data_df["x"]) & np.isfinite(data_df["z_max"])]
-
-    # --- Plot individual models ---
-    colors = ["blue", "orange", "purple", "brown"]
-    for i, (_, row) in enumerate(r_df.iterrows()):
-        out_path = os.path.join(out_dir, f"model_{i}.png")
-        _plot_single_model(data_df["x"].values, data_df["z_max"].values, row, out_path, xlim=xlim, ylim=ylim, color=colors[i])
-        print(f"  Saved: {out_path}")
-
-    summary_path = os.path.join(out_dir, "slope_summary.csv")
-    r_df_to_save = r_df.drop(columns=["x_pred", "y_pred"])
-    r_df_to_save.to_csv(summary_path, index=False)
-    print(f"\nSummary saved: {summary_path}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run segmented slope analysis using R.")
-    parser.add_argument("--csv_path", type=str, default=None)
-    args = parser.parse_args()
-    main(csv_path=args.csv_path)
+    main()

@@ -1,5 +1,6 @@
 import os
 import numpy as np
+
 from granular_analysis.config import (
     FOLDER,
     OUTDIR_2D,
@@ -9,76 +10,265 @@ from granular_analysis.config import (
     USE_PARTICLE_SKIP,
     SKIP_FIRST_PARTICLES,
 )
-from granular_analysis.io.loader import load_last_frame, filter_particles
+
+from granular_analysis.io.loader import load_last_frame
 from granular_analysis.analysis.porosity2d import compute_slice_porosity
 from granular_analysis.utils.state_manager import load_state, save_state
 
-def main(force: bool = False):
-    # ensure output directory exists
-    os.makedirs(OUTDIR_2D, exist_ok=True)
-    
+
+def resolve_data_folder(data_folder):
+    """
+    Resolve a dataset path to the directory containing ellipsoid_trn
+    binary files.
+
+    Accepted input paths include:
+        .../results
+        .../results/ellipsoid
+        .../results/ellipsoid/ellipsoid_trn
+        .../ellipsoid_trn
+    """
+
+    data_folder = os.path.abspath(data_folder)
+
+    candidates = [
+        data_folder,
+        os.path.join(data_folder, "ellipsoid_trn"),
+        os.path.join(data_folder, "ellipsoid", "ellipsoid_trn"),
+        os.path.join(data_folder, "ellipsoid"),
+    ]
+
+    for candidate in candidates:
+        if not os.path.isdir(candidate):
+            continue
+
+        try:
+            files = os.listdir(candidate)
+        except OSError:
+            continue
+
+        if any(filename.endswith(".bin") for filename in files):
+            return candidate
+
+    raise FileNotFoundError(
+        "Could not resolve ellipsoid_trn data directory from:\n"
+        f"  {data_folder}"
+    )
+
+
+def main(
+    force: bool = False,
+    path: str = None,
+    out: str = None,
+    z_value: float = 2.5,
+    densify: float = None,
+    upper_edge_bins: int = 50,
+):
+    """
+    Run the 2D slice/porosity analysis.
+
+    Parameters
+    ----------
+    force : bool
+        Recompute even if a cached result exists.
+
+    path : str
+        Dataset path. Can point to:
+            .../results
+            .../results/ellipsoid
+            .../results/ellipsoid/ellipsoid_trn
+
+    out : str
+        Writable output root directory.
+
+    z_value : float
+        z-coordinate of the slice used for upper-edge extraction.
+
+    densify : float, optional
+        Maximum segment length used for boundary densification.
+
+    upper_edge_bins : int
+        Number of bins for upper-edge extraction.
+    """
+
+    # ------------------------------------------------------------
+    # Resolve input data directory
+    # ------------------------------------------------------------
+
+    data_folder = (
+        path
+        if path
+        else os.environ.get("GRANULAR_DATA_FOLDER")
+        or FOLDER
+    )
+
+    data_folder = resolve_data_folder(data_folder)
+
+    # ------------------------------------------------------------
+    # Resolve writable output directory
+    # ------------------------------------------------------------
+
+    if out:
+        results_dir = os.path.abspath(out)
+        outdir = os.path.join(results_dir, "2d")
+    else:
+        results_dir = os.path.abspath(RESULTS_DIR)
+        outdir = os.path.abspath(OUTDIR_2D)
+
+    os.makedirs(outdir, exist_ok=True)
+
+    print()
+    print("2D ANALYSIS PATHS")
+    print("------------------------------------------------------------")
+    print(f"DATA       = {data_folder}")
+    print(f"RESULTS    = {results_dir}")
+    print(f"2D OUTPUT  = {outdir}")
+    print("------------------------------------------------------------")
+
+    # ------------------------------------------------------------
     # Check cache
-    cached = None if force else load_state("2d", RESULTS_DIR)
+    # ------------------------------------------------------------
+
+    cached = None if force else load_state("2d", results_dir)
+
     if cached:
+        print()
         print("2D Porosity result (cached):")
+
         for k, v in cached.items():
             if k != "timestamp":
                 print(f"  {k} = {v}")
-        # Even if cached, we still need to extract the upper edge
-        # So we load data and compute the z=2.5 slice
-        ellipsoids = load_last_frame(FOLDER)
-        particles = filter_particles(ellipsoids, USE_PARTICLE_SKIP, SKIP_FIRST_PARTICLES)
-        compute_slice_porosity(particles, z0=2.5, alpha=ALPHA_2D, lz=LZ)
+
+        print()
+        print(
+            f"Extracting upper edge at z0={z_value} "
+            "(cached calculation)..."
+        )
+
+        ellipsoids = load_last_frame(data_folder)
+
+        compute_slice_porosity(
+            ellipsoids,
+            z0=z_value,
+            alpha=ALPHA_2D,
+            lz=LZ,
+            densify_max_segment_length=densify,
+            n_bins=upper_edge_bins,
+            skip_first=(
+                SKIP_FIRST_PARTICLES
+                if USE_PARTICLE_SKIP
+                else 0
+            ),
+            output_dir=outdir,
+        )
+
         return
 
-    # load data
-    ellipsoids = load_last_frame(FOLDER)
-    particles = filter_particles(
-        ellipsoids,
-        USE_PARTICLE_SKIP,
-        SKIP_FIRST_PARTICLES,
-    )
-    
-    # computation for porosity at z0=0.0
+    # ------------------------------------------------------------
+    # Load data
+    # ------------------------------------------------------------
+
+    print()
+    print("Loading last ellipsoid frame...")
+
+    ellipsoids = load_last_frame(data_folder)
+
+    particles = ellipsoids
+
+    print(f"Loaded {len(particles)} particles.")
+
+    # ------------------------------------------------------------
+    # Main 2D computation
+    #
+    # This is the z=0 slice used for the porosity calculation.
+    # ------------------------------------------------------------
+
+    print()
+    print("Computing 2D porosity at z0=0.0 ...")
+
     result = compute_slice_porosity(
         particles,
         z0=0.0,
         alpha=ALPHA_2D,
         lz=LZ,
+        densify_max_segment_length=densify,
+        n_bins=upper_edge_bins,
+        skip_first=(
+            SKIP_FIRST_PARTICLES
+            if USE_PARTICLE_SKIP
+            else 0
+        ),
+        output_dir=outdir,
     )
-    
+
     if result is None:
         print("No valid slice computed.")
         return
-    
-    # computation for upper edge extraction at z0=2.5
-    print("Extracting upper edge at z0=2.5 ...")
+
+    # ------------------------------------------------------------
+    # Upper-edge extraction at requested z
+    # ------------------------------------------------------------
+
+    print()
+    print(f"Extracting upper edge at z0={z_value} ...")
+
     compute_slice_porosity(
         particles,
-        z0=2.5,
+        z0=z_value,
         alpha=ALPHA_2D,
         lz=LZ,
+        densify_max_segment_length=densify,
+        n_bins=upper_edge_bins,
+        skip_first=(
+            SKIP_FIRST_PARTICLES
+            if USE_PARTICLE_SKIP
+            else 0
+        ),
+        output_dir=outdir,
     )
 
-    # Convert numpy values to python native types for JSON serialization
+    # ------------------------------------------------------------
+    # Convert numpy values to Python-native types
+    # for JSON serialization
+    # ------------------------------------------------------------
+
     result_serializable = {}
+
     for k, v in result.items():
+
         if isinstance(v, np.ndarray):
             result_serializable[k] = v.tolist()
+
         elif isinstance(v, np.number):
             result_serializable[k] = v.item()
+
         else:
             result_serializable[k] = v
 
-    # output
+    # ------------------------------------------------------------
+    # Print result
+    # ------------------------------------------------------------
+
+    print()
     print("2D Porosity result:")
     print(f"  porosity = {result['porosity']}")
     print(f"  A_ell    = {result['A_ell']}")
     print(f"  A_alpha  = {result['A_alpha']}")
     print(f"  n        = {result['n']}")
 
-    # Save to cache
-    save_state("2d", result_serializable, RESULTS_DIR)
+    # ------------------------------------------------------------
+    # Save cache in the writable output directory
+    # ------------------------------------------------------------
+
+    save_state(
+        "2d",
+        result_serializable,
+        results_dir,
+    )
+
+    print()
+    print("2D analysis completed successfully.")
+    print(f"Output directory: {outdir}")
+
 
 if __name__ == "__main__":
     main()

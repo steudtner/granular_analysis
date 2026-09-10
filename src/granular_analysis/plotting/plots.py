@@ -36,11 +36,11 @@ def plot_energy_time_series(df, out, use_normalized=False):
     if use_normalized and "time_norm" in df.columns and "kinetic_energy_norm" in df.columns:
         x = df["time_norm"]
         y = df["kinetic_energy_norm"]
-        ax.set_xlabel(r"$t \sqrt{g}$", fontsize=14)
-        ax.set_ylabel(r"$\sum E_{kin} / (\rho g D_{eq}^4)$", fontsize=14)
+        ax.set_xlabel(r"$t \sqrt{g / D_{\mathrm{Eq}}}$", fontsize=14)
+        ax.set_ylabel(r"$\sum E_{kin} / (\rho g D_{\mathrm{Eq}}^4)$", fontsize=14)
         ax.set_title("Normalized kinetic energy over time", fontsize=14)
-
-        if len(y) > 0:
+        """
+         if len(y) > 0:
             E_max = y.max()
             threshold = 0.03 * E_max
             ax.axhline(
@@ -49,7 +49,7 @@ def plot_energy_time_series(df, out, use_normalized=False):
                 linestyle="--",
                 linewidth=2,
                 label=r"$\epsilon = 3\% \sum E_{kin,max}$"
-            )
+            ) """
     else:
         x = df["time"]
         y = df["kinetic_energy"]
@@ -60,6 +60,31 @@ def plot_energy_time_series(df, out, use_normalized=False):
     ax.plot(x, y, linewidth=2, label=r"$\sum E_{kin}$")
     ax.grid(True)
     ax.legend(fontsize=12)
+    plt.tight_layout()
+    plt.savefig(out, dpi=300)
+    plt.close()
+
+
+def plot_energy_components(df, out, use_normalized=False):
+    """Plot translational, rotational, and total kinetic energy."""
+    fig, ax = plt.subplots(figsize=(12, 4))
+    if use_normalized and "time_norm" in df.columns:
+        x = df["time_norm"]
+        suffix = "_norm"
+        ax.set_xlabel(r"$t \sqrt{g / D_{\mathrm{Eq}}}$", fontsize=14)
+        ax.set_ylabel(r"$E / (\rho g D_{\mathrm{Eq}}^4)$", fontsize=14)
+    else:
+        x = df["time"]
+        suffix = ""
+        ax.set_xlabel("time", fontsize=12)
+        ax.set_ylabel("kinetic energy", fontsize=12)
+
+    ax.plot(x, df[f"translational_energy{suffix}"], label="translational")
+    ax.plot(x, df[f"rotational_energy{suffix}"], label="rotational")
+    ax.plot(x, df[f"kinetic_energy{suffix}"], linewidth=2, label="total")
+    ax.set_title("Kinetic energy components over time")
+    ax.grid(True)
+    ax.legend()
     plt.tight_layout()
     plt.savefig(out, dpi=300)
     plt.close()
