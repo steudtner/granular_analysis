@@ -24,6 +24,8 @@ import pyvista as pv
 
 from granular_analysis.config import RENDER_BOUNDS
 
+from granular_analysis.geometry.ellipsoid import _rotation_matrix
+
 
 # ============================================================
 # CAMERA DEFINITIONS
@@ -175,7 +177,6 @@ def ellipsoids_to_polydata(
         )
 
         if center.shape != (3,):
-
             raise ValueError(
                 "Particle position e['x'] must contain "
                 "three coordinates."
@@ -200,12 +201,7 @@ def ellipsoids_to_polydata(
             continue
 
         # ----------------------------------------------------
-        # Scale unit sphere to ellipsoid
-        #
-        # IMPORTANT:
-        # The current geometry module does not provide a
-        # particle rotation matrix. Therefore the ellipsoids
-        # are rendered axis-aligned.
+        # Scale in particle-local coordinates
         # ----------------------------------------------------
 
         points = (
@@ -217,10 +213,28 @@ def ellipsoids_to_polydata(
         )
 
         # ----------------------------------------------------
+        # Apply particle orientation
+        #
+        # q is scalar-first:
+        # [w, x, y, z]
+        #
+        # Same rotation convention as
+        # geometry.ellipsoid.ellipsoid_surface_points().
+        # ----------------------------------------------------
+
+        R = _rotation_matrix(e)
+
+        points = points @ R.T
+
+        # ----------------------------------------------------
         # Translation
         # ----------------------------------------------------
 
         points += center
+
+        # ----------------------------------------------------
+        # Create particle mesh
+        # ----------------------------------------------------
 
         particle_mesh = pv.PolyData(
             points,
@@ -231,17 +245,21 @@ def ellipsoids_to_polydata(
             particle_mesh
         )
 
-    if not all_meshes:
+    # --------------------------------------------------------
+    # No valid particles
+    # --------------------------------------------------------
 
-        raise RuntimeError(
-            "No valid ellipsoid particles found."
-        )
+    if not all_meshes:
+        return pv.PolyData()
+
+    # --------------------------------------------------------
+    # Merge all particles
+    # --------------------------------------------------------
 
     return pv.merge(
         all_meshes,
         merge_points=False,
     )
-
 
 # ============================================================
 # CAMERA
