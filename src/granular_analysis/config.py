@@ -47,7 +47,7 @@ RESULTS_DIR = (
 # ============================================================
 LZ = 5.0
 
-ALPHA_2D = 0.8
+ALPHA_2D = 0.6
 ALPHA_3D = 0.6
 
 Z_LEVELS = np.round(
@@ -56,7 +56,7 @@ Z_LEVELS = np.round(
 )
 
 USE_PARTICLE_SKIP = True
-SKIP_FIRST_PARTICLES = 2000
+SKIP_FIRST_PARTICLES = 1000
 
 D_EQ = 1.0
 
