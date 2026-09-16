@@ -59,7 +59,7 @@ def main(
     force: bool = False,
     path: str = None,
     out: str = None,
-    z_value: float = 2.5,
+    z_value: float = LZ / 2,
     densify: float = None,
     upper_edge_bins: int = 50,
 ):
@@ -81,7 +81,11 @@ def main(
         Writable output root directory.
 
     z_value : float
-        z-coordinate of the slice used for upper-edge extraction.
+        z-coordinate of the slice used for the porosity calculation
+        and upper-edge extraction.
+
+        Default:
+            LZ / 2
 
     densify : float, optional
         Maximum segment length used for boundary densification.
@@ -179,15 +183,16 @@ def main(
     # ------------------------------------------------------------
     # Main 2D computation
     #
-    # This is the z=0 slice used for the porosity calculation.
+    # Slice position is determined automatically from LZ:
+    # z0 = LZ / 2
     # ------------------------------------------------------------
 
     print()
-    print("Computing 2D porosity at z0=0.0 ...")
+    print(f"Computing 2D porosity at z0={z_value} ...")
 
     result = compute_slice_porosity(
         particles,
-        z0=0.0,
+        z0=z_value,
         alpha=ALPHA_2D,
         lz=LZ,
         densify_max_segment_length=densify,

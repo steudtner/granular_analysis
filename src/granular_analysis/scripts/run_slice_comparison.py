@@ -219,15 +219,14 @@ def print_statistics(df):
                 f"std={p.std():.4f}"
             )
 
-
 # --------------------------------------------------
 # PATH RESOLUTION
 # --------------------------------------------------
 
 def resolve_data_folder(data_folder):
     """
-    Resolve the supplied case/results path to the directory
-    containing the ellipsoid TRN binary files.
+    Resolve the supplied path to the directory containing
+    the ellipsoid TRN binary files.
 
     Accepted input forms:
 
@@ -237,27 +236,16 @@ def resolve_data_folder(data_folder):
         .../ellipsoid_trn
     """
 
-    data_folder = os.path.abspath(data_folder)
+    data_folder = os.path.abspath(os.path.expanduser(data_folder))
 
     candidates = [
         data_folder,
-        os.path.join(
-            data_folder,
-            "ellipsoid_trn",
-        ),
-        os.path.join(
-            data_folder,
-            "ellipsoid",
-            "ellipsoid_trn",
-        ),
-        os.path.join(
-            data_folder,
-            "ellipsoid",
-        ),
+        os.path.join(data_folder, "ellipsoid_trn"),
+        os.path.join(data_folder, "ellipsoid", "ellipsoid_trn"),
+        os.path.join(data_folder, "ellipsoid"),
     ]
 
     for candidate in candidates:
-
         if not os.path.isdir(candidate):
             continue
 
@@ -266,18 +254,14 @@ def resolve_data_folder(data_folder):
         except OSError:
             continue
 
-        if any(
-            filename.endswith(".bin")
-            for filename in files
-        ):
+        if any(f.endswith(".bin") for f in files):
             return candidate
 
     raise FileNotFoundError(
-        "Could not find ellipsoid TRN .bin files. "
-        f"Checked starting from: {data_folder}"
+        "Could not find ellipsoid TRN .bin files.\n"
+        f"Checked candidates:\n"
+        + "\n".join(f"  {c}" for c in candidates)
     )
-
-
 # --------------------------------------------------
 # MAIN
 # --------------------------------------------------

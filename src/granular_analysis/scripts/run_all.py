@@ -1,3 +1,45 @@
+#!/usr/bin/env python3
+"""
+Master runner for granular_analysis pipelines.
+
+Supports:
+    - standard simulation result folders
+    - settling-matrix case roots
+    - explicit results folders
+    - nested ellipsoid / ellipsoid_trn data structures
+
+Examples
+--------
+Standard case:
+
+    python -m granular_analysis.scripts.run_all \
+        --only 2d \
+        --path /path/to/case/results
+
+Settling-matrix case root:
+
+    python -m granular_analysis.scripts.run_all \
+        --only 2d \
+        --path /path/to/case
+
+Collision distances:
+
+    python -m granular_analysis.scripts.run_all \
+        --only collision_distances \
+        --path /path/to/case
+
+Exact slice:
+
+    python -m granular_analysis.scripts.run_all \
+        --only slices \
+        --path /path/to/case
+
+Full analysis:
+
+    python -m granular_analysis.scripts.run_all \
+        --path /path/to/case
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -9,586 +51,684 @@ import sys
 import traceback
 
 
-# ============================================================
+# ============================================================================
+# CONFIG
+# ============================================================================
+
+from granular_analysis.config import (
+    FOLDER,
+    OUTDIR_2D,
+    RESULTS_DIR,
+    ALPHA_2D,
+    LZ,
+    USE_PARTICLE_SKIP,
+    SKIP_FIRST_PARTICLES,
+)
+
+
+# ============================================================================
+# PIPELINE IMPORTS
+# ============================================================================
+
+from granular_analysis.scripts.run_2d_analysis import main as run_2d
+from granular_analysis.scripts.run_slice_comparison import main as run_slices
+from granular_analysis.scripts.run_energy_analysis import main as run_energy
+from granular_analysis.scripts.run_slope_analysis import main as run_slope
+from granular_analysis.scripts.run_collision_distances import (
+    main as run_collision_distances
+)
+
+from granular_analysis.plotting.slice_plotter import (
+    plot_exact_slice_from_ellipsoids
+)
+
+from granular_analysis.scripts.run_slice_comparison import load_particles
+
+from granular_analysis.io.loader import load_last_frame
+
+from granular_analysis.plotting.particle_3d_plotter import (
+    render_particle_views
+)
+
+
+# ============================================================================
 # PATH RESOLUTION
-# ============================================================
+# ============================================================================
 
 def _resolve_data_folder(path: str | None = None) -> str:
     """
-    Resolve the data folder used by the analysis.
+    Resolve the input data directory.
 
-    Priority:
-        1. Explicit --path
-        2. Environment variable GRANULAR_ANALYSIS_FOLDER
-        3. Configured FOLDER
+    Accepted input forms:
+
+        <case>
+        <case>/results
+        <case>/results/ellipsoid
+        <case>/results/ellipsoid/ellipsoid_trn
+
+    The TRN directory is returned unchanged if supplied directly.
     """
+
+    # ---------------------------------------------------------------
+    # Select source
+    # ---------------------------------------------------------------
+
     if path:
-        return str(pathlib.Path(path).expanduser().resolve())
+        candidate = path
 
-    env_path = os.environ.get("GRANULAR_ANALYSIS_FOLDER")
-    if env_path:
-        return str(pathlib.Path(env_path).expanduser().resolve())
+    elif os.environ.get("GRANULAR_DATA_FOLDER"):
+        candidate = os.environ["GRANULAR_DATA_FOLDER"]
 
-    from granular_analysis.config import FOLDER
+    else:
+        candidate = FOLDER
 
-    return str(pathlib.Path(FOLDER).expanduser().resolve())
+    p = pathlib.Path(
+        candidate
+    ).expanduser().resolve()
 
+    # ---------------------------------------------------------------
+    # IMPORTANT:
+    #
+    # The configured default is already:
+    #
+    #   .../results/ellipsoid/ellipsoid_trn
+    #
+    # Do NOT append anything to it.
+    # ---------------------------------------------------------------
 
-def _resolve_latest_collision_counter(
-    path: str | None = None,
-) -> int | None:
+    if p.name == "ellipsoid_trn":
+        return str(p)
+
+    # ---------------------------------------------------------------
+    # Ellipsoid root
+    # ---------------------------------------------------------------
+
+    if p.name == "ellipsoid":
+        return str(p)
+
+    # ---------------------------------------------------------------
+    # Results directory
+    # ---------------------------------------------------------------
+
+    if p.name == "results":
+        return str(p)
+
+    # ---------------------------------------------------------------
+    # Case root
+    # ---------------------------------------------------------------
+
+    results_dir = p / "results"
+
+    if results_dir.is_dir():
+        return str(results_dir)
+
+    # ---------------------------------------------------------------
+    # Fallback
+    # ---------------------------------------------------------------
+
+    return str(p)
+def _resolve_ellipsoid_root(data_folder: str) -> str:
     """
-    Try to determine the latest collision counter from filenames.
+    Resolve the ellipsoid root directory.
 
-    Returns None if no counter can be determined.
+    Accepted input:
+
+        .../results
+        .../results/ellipsoid
+        .../results/ellipsoid/ellipsoid_trn
     """
 
-    folder = pathlib.Path(path or ".").expanduser()
+    p = pathlib.Path(
+        data_folder
+    ).expanduser().resolve()
 
-    if not folder.exists():
-        return None
+    # Already ellipsoid root
+    if p.name == "ellipsoid":
+        return str(p)
+
+    # Already TRN directory
+    if p.name == "ellipsoid_trn":
+        return str(p.parent)
+
+    # Standard results directory
+    candidate = p / "ellipsoid"
+
+    if candidate.is_dir():
+        return str(candidate)
+
+    return str(candidate)
+
+
+def _resolve_trn_folder(data_folder: str) -> str:
+    """
+    Resolve the directory containing ell_trn_XXXXXX.bin files.
+
+    Expected structure:
+
+        .../results/ellipsoid/ellipsoid_trn/
+    """
+
+    p = pathlib.Path(
+        data_folder
+    ).expanduser().resolve()
+
+    # ---------------------------------------------------------------
+    # Already the TRN directory
+    # ---------------------------------------------------------------
+
+    if p.name == "ellipsoid_trn":
+        return str(p)
+
+    # ---------------------------------------------------------------
+    # Supplied ellipsoid root
+    # ---------------------------------------------------------------
+
+    if p.name == "ellipsoid":
+        trn_dir = p / "ellipsoid_trn"
+
+        if trn_dir.is_dir():
+            return str(trn_dir)
+
+        return str(trn_dir)
+
+    # ---------------------------------------------------------------
+    # Standard results/ellipsoid/ellipsoid_trn structure
+    # ---------------------------------------------------------------
+
+    trn_dir = p / "ellipsoid" / "ellipsoid_trn"
+
+    if trn_dir.is_dir():
+        return str(trn_dir)
+
+    # ---------------------------------------------------------------
+    # Supplied case/results directory
+    # ---------------------------------------------------------------
+
+    trn_dir = p / "ellipsoid" / "ellipsoid_trn"
+
+    return str(trn_dir)
+
+# ============================================================================
+# COUNTER RESOLUTION
+# ============================================================================
+
+def _extract_counter_from_filename(filename: str) -> int | None:
+    """
+    Extract the final six-digit counter from a filename.
+
+    Examples
+    --------
+    ell_trn_000123.bin
+        -> 123
+
+    ell_coll_000456.bin
+        -> 456
+
+    collision_000789.dat
+        -> 789
+    """
+
+    name = os.path.basename(filename)
+
+    matches = re.findall(r"(\d{6})(?:\.[^.]+)?$", name)
+
+    if matches:
+        return int(matches[-1])
+
+    # More general fallback
+    matches = re.findall(r"(\d+)", name)
+
+    if matches:
+        return int(matches[-1])
+
+    return None
+
+
+def _resolve_latest_trn_counter(data_folder: str) -> int | None:
+    """
+    Find the newest TRN counter.
+
+    Searches the nested settling-matrix structure:
+
+        results/ellipsoid/ellipsoid_trn/ell_trn_XXXXXX.bin
+
+    and also several backwards-compatible locations.
+    """
+
+    trn_folder = pathlib.Path(
+        _resolve_trn_folder(data_folder)
+    )
 
     candidates = []
 
-    patterns = [
-        "*collision*",
-        "*coll*",
-        "*counter*",
-    ]
-
-    for pattern in patterns:
-        candidates.extend(folder.glob(pattern))
-
-    numbers = []
-
-    for item in candidates:
-        match = re.findall(r"\d+", item.name)
-
-        if not match:
-            continue
-
-        for value in match:
-            try:
-                numbers.append(int(value))
-            except ValueError:
-                pass
-
-    if not numbers:
-        return None
-
-    return max(numbers)
-
-
-def _resolve_latest_trn_counter(
-    path: str | None = None,
-) -> int | None:
-    """
-    Determine the latest available TRN timestep
-    from ell_trn_XXXXXX.bin files.
-    """
-
-    folder = pathlib.Path(path or ".").expanduser()
-
-    if not folder.exists():
-        return None
-
-    counters = []
-
-    for item in folder.glob("ell_trn_*.bin"):
-
-        match = re.search(
-            r"ell_trn_(\d+)\.bin$",
-            item.name,
+    if trn_folder.is_dir():
+        candidates.extend(
+            trn_folder.glob("ell_trn_*.bin")
         )
 
-        if match:
-            counters.append(
-                int(match.group(1))
-            )
+    # Backwards-compatible alternatives
+    p = pathlib.Path(data_folder).expanduser().resolve()
+
+    search_patterns = [
+        p / "ellipsoid_trn" / "ell_trn_*.bin",
+        p / "ellipsoid" / "ellipsoid_trn" / "ell_trn_*.bin",
+        p / "ellipsoid" / "ell_trn_*.bin",
+        p / "ell_trn_*.bin",
+    ]
+
+    for pattern in search_patterns:
+        candidates.extend(
+            pathlib.Path(x)
+            for x in glob.glob(str(pattern))
+        )
+
+    # Remove duplicates
+    unique = {}
+
+    for candidate in candidates:
+        unique[str(candidate.resolve())] = candidate
+
+    candidates = list(unique.values())
+
+    if not candidates:
+        return None
+
+    # Prefer highest counter rather than filesystem order.
+    counters = []
+
+    for candidate in candidates:
+        counter = _extract_counter_from_filename(
+            candidate.name
+        )
+
+        if counter is not None:
+            counters.append(counter)
 
     if not counters:
         return None
 
     return max(counters)
 
-# ============================================================
-# CONFIG
-# ============================================================
 
-from granular_analysis.config import (
-    FOLDER,
-    OUTDIR_2D,
-    RESULTS_DIR,
-)
-
-
-# ============================================================
-# PIPELINE IMPORTS
-# ============================================================
-
-from granular_analysis.scripts.run_2d_analysis import (
-    main as run_2d,
-)
-
-from granular_analysis.scripts.run_slice_comparison import (
-    main as run_slices,
-)
-
-from granular_analysis.scripts.run_energy_analysis import (
-    main as run_energy,
-)
-
-from granular_analysis.scripts.run_slope_analysis import (
-    main as run_slope,
-)
-
-from granular_analysis.scripts.run_collision_distances import (
-    main as run_collision_distances,
-)
-
-from granular_analysis.plotting.slice_plotter import (
-    plot_exact_slice_from_ellipsoids,
-)
-
-from granular_analysis.scripts.run_slice_comparison import (
-    load_particles,
-)
-
-from granular_analysis.io.read_ellipsoid_data import (
-    load_data,
-)
-
-from granular_analysis.plotting.particle_3d_plotter import (
-    render_particle_views,
-)
-
-
-# ============================================================
-# PIPELINE RUNNER
-# ============================================================
-
-def run_pipeline(
-    name: str,
-    func,
-    force: bool = False,
-    **kwargs,
-):
+def _resolve_latest_collision_counter(data_folder: str) -> int | None:
     """
-    Run one analysis pipeline.
+    Find the newest collision counter.
 
-    Some older pipeline functions may not accept force=.
-    Therefore a fallback without force is provided.
+    Searches recursively because settling-matrix cases may have:
+
+        results/
+            ellipsoid/
+                ellipsoid_coll/
+                ellipsoid_trn/
+
+    or other collision-related output locations.
+
+    If no collision-specific file can be found, the newest TRN counter
+    is used as fallback because collision_distances requires the same
+    simulation frame for TRN and COLL.
     """
 
-    print("=" * 60)
-    print(f"Running: {name}")
-    print("=" * 60)
+    p = pathlib.Path(data_folder).expanduser().resolve()
 
-    try:
+    patterns = [
+        "*coll*.bin",
+        "*coll*.dat",
+        "*collision*.bin",
+        "*collision*.dat",
+        "*counter*.bin",
+        "*counter*.dat",
+    ]
 
-        return func(
-            force=force,
-            **kwargs,
+    candidates = []
+
+    for pattern in patterns:
+        candidates.extend(p.rglob(pattern))
+
+    # Also explicitly search common COLL directory
+    explicit_dirs = [
+        p / "ellipsoid" / "ellipsoid_coll",
+        p / "ellipsoid_coll",
+        p / "ellipsoid" / "coll",
+        p / "coll",
+    ]
+
+    for directory in explicit_dirs:
+        if directory.is_dir():
+            for item in directory.iterdir():
+                if item.is_file():
+                    candidates.append(item)
+
+    # Remove duplicates
+    unique = {}
+
+    for candidate in candidates:
+        unique[str(candidate.resolve())] = candidate
+
+    candidates = list(unique.values())
+
+    counters = []
+
+    for candidate in candidates:
+        counter = _extract_counter_from_filename(
+            candidate.name
         )
 
-    except TypeError as exc:
+        if counter is not None:
+            counters.append(counter)
 
-        message = str(exc)
+    if counters:
+        return max(counters)
 
-        if "unexpected keyword argument 'force'" not in message:
-            raise
+    # ------------------------------------------------------------------
+    # Fallback:
+    # collision_distances requires TRN and COLL at the same counter.
+    # If no separately named collision file can be found, use latest TRN.
+    # ------------------------------------------------------------------
 
-        print(
-            f"[INFO] Pipeline '{name}' does not accept force=. "
-            f"Retrying without force."
-        )
-
-        return func(**kwargs)
-
-
-# ============================================================
-# BIN FILE
-# ============================================================
-
-def _resolve_latest_bin_path(
-    folder: str | pathlib.Path,
-):
-    """
-    Find the latest .bin file in a folder.
-
-    Returns None if no .bin file exists.
-    """
-
-    folder = pathlib.Path(folder)
-
-    if not folder.exists():
-        return None
-
-    files = list(folder.glob("*.bin"))
-
-    if not files:
-        return None
-
-    def sort_key(path):
-        try:
-            return path.stat().st_mtime
-        except OSError:
-            return 0
-
-    files.sort(
-        key=sort_key
-    )
-
-    return files[-1]
+    return _resolve_latest_trn_counter(data_folder)
 
 
-# ============================================================
-# EXACT SLICE PLOT
-# ============================================================
+# ============================================================================
+# EXACT SLICE
+# ============================================================================
 
 def _run_exact_slice_plot(
     args,
-    out_dir,
+    data_folder: str,
+    out_dir: pathlib.Path,
 ):
     """
-    Run the exact ellipsoid slice plot.
+    Generate the exact ellipsoid slice plot.
 
-    Uses the existing slice_plotter.py implementation to draw:
-        - all intersected ellipses
-        - optional alpha-shape
-        - optional upper edge
+    The plot can optionally contain:
+        - alpha shape
+        - upper edge
     """
 
     print("=" * 60)
     print("Running: exact slice plot")
     print("=" * 60)
 
-    try:
+    # ---------------------------------------------------------------
+    # Resolve actual TRN directory
+    # ---------------------------------------------------------------
 
-        # --------------------------------------------------------
-        # Input path
-        # --------------------------------------------------------
+    trn_path = pathlib.Path(
+        _resolve_trn_folder(data_folder)
+    ).resolve()
 
-        path = (
-            args.path
-            or args.folder
-            or FOLDER
+    print("Loading particles from:")
+    print(f"  {trn_path}")
+
+    if not trn_path.is_dir():
+        raise FileNotFoundError(
+            f"TRN directory not found:\n{trn_path}"
         )
 
-        # --------------------------------------------------------
-        # Slice position
-        # --------------------------------------------------------
+    bin_files = list(trn_path.glob("*.bin"))
 
-        z_value = (
-            args.z
-            if args.z is not None
-            else 2.5
+    if not bin_files:
+        raise FileNotFoundError(
+            f"No .bin files found in:\n{trn_path}"
         )
 
-        # --------------------------------------------------------
-        # Load particles
-        # --------------------------------------------------------
+    # ---------------------------------------------------------------
+    # Load particles
+    # ---------------------------------------------------------------
 
-        print(
-            "Loading particles from:"
-        )
+    ellipsoids = load_last_frame(trn_path)
 
-        print(
-            f"  {path}"
-        )
+    print(f"Loaded {len(ellipsoids)} particles.")
 
-        print()
+    # ---------------------------------------------------------------
+    # Output directory
+    # ---------------------------------------------------------------
 
-        ellipsoids = load_particles(
-            path
-        )
+    slice_out = out_dir / "2d"
 
-        print(
-            f"Loaded {len(ellipsoids)} particles."
-        )
+    slice_out.mkdir(
+        parents=True,
+        exist_ok=True
+    )
 
-        print()
+    # ---------------------------------------------------------------
+    # Parameters
+    # ---------------------------------------------------------------
 
-        # --------------------------------------------------------
-        # Output directory
-        #
-        # Keep the exact slice plots together with the 2D results.
-        # --------------------------------------------------------
+    z = (
+        args.z
+        if args.z is not None
+        else LZ / 2
+    )
 
-        slice_out_dir = pathlib.Path(
-            out_dir
-        ) / "2d"
+    alpha = (
+        args.alpha
+        if args.alpha is not None
+        else ALPHA_2D
+    )
 
-        slice_out_dir.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
+    upper_edge_bins = (
+        args.upper_edge_bins
+        if args.upper_edge_bins is not None
+        else 50
+    )
 
-        output_path = (
-            slice_out_dir
-            / f"alphashape_slice_{z_value:.2f}.svg"
-        )
-
-        # --------------------------------------------------------
-        # Optional parameters
-        # --------------------------------------------------------
-
-        alpha = (
-            args.alpha
-            if args.alpha is not None
-            else 0.6
-        )
-
-        upper_edge_bins = (
-            args.upper_edge_bins
-            if args.upper_edge_bins is not None
-            else 50
-        )
-
-        skip_points = (
-            args.skip_points
-            if args.skip_points is not None
+    skip_points = (
+        args.skip_points
+        if args.skip_points is not None
+        else (
+            SKIP_FIRST_PARTICLES
+            if USE_PARTICLE_SKIP
             else 0
         )
+    )
 
-        densify = (
+    xlim = (
+        tuple(args.xlim)
+        if args.xlim is not None
+        else (0.0, 60.0)
+    )
+
+    ylim = (
+        tuple(args.ylim)
+        if args.ylim is not None
+        else (0.0, 20.0)
+    )
+
+    # ---------------------------------------------------------------
+    # Plot options
+    # ---------------------------------------------------------------
+
+    use_alphashape = args.alphashape
+    use_upper_edge = args.upper_edge
+
+    # Upper edge requires an alpha shape.
+    if use_upper_edge:
+        use_alphashape = True
+
+    print()
+    print("Exact slice parameters:")
+    print(f"  z               = {z}")
+    print(f"  alpha           = {alpha}")
+    print(f"  alphashape      = {use_alphashape}")
+    print(f"  upper_edge      = {use_upper_edge}")
+    print(f"  upper_edge_bins = {upper_edge_bins}")
+    print(f"  skip_points     = {skip_points}")
+    print(f"  xlim            = {xlim}")
+    print(f"  ylim            = {ylim}")
+    print()
+
+    # ---------------------------------------------------------------
+    # Output filename
+    # ---------------------------------------------------------------
+
+    suffix = (
+        "_upperEdge"
+        if use_upper_edge
+        else ""
+    )
+
+    output_path = (
+        slice_out
+        / f"alphashape_slice_{z:.2f}{suffix}.svg"
+    )
+
+    # ---------------------------------------------------------------
+    # Plot
+    # ---------------------------------------------------------------
+
+    result = plot_exact_slice_from_ellipsoids(
+        ellipsoids,
+        z_plane=z,
+        output_path=output_path,
+        alphashape=use_alphashape,
+        alpha=alpha,
+        upper_edge=use_upper_edge,
+        upper_edge_bins=upper_edge_bins,
+        densify_max_segment_length=(
             args.densify
-            if args.densify is not None
+            if args.densify
             else None
+        ),
+        skip_points=skip_points,
+        xlim=xlim,
+        ylim=ylim,
+    )
+
+    print()
+    print(
+        f"Saved exact slice plot to:\n"
+        f"  {result['output_path']}"
+    )
+
+    return result
+
+# ============================================================================
+# RENDERVIEW
+# ============================================================================
+
+def _resolve_latest_bin_path(data_folder: str) -> str | None:
+    """
+    Find the newest TRN binary file.
+    """
+
+    trn_folder = pathlib.Path(
+        _resolve_trn_folder(data_folder)
+    )
+
+    if not trn_folder.is_dir():
+        return None
+
+    files = list(
+        trn_folder.glob("ell_trn_*.bin")
+    )
+
+    if not files:
+        return None
+
+    files.sort(
+        key=lambda p: (
+            _extract_counter_from_filename(p.name)
+            if _extract_counter_from_filename(p.name) is not None
+            else -1
         )
+    )
 
-        xlim = (
-            tuple(args.xlim)
-            if args.xlim is not None
-            else (0, 60)
-        )
+    return str(files[-1])
 
-        ylim = (
-            tuple(args.ylim)
-            if args.ylim is not None
-            else (0, 20)
-        )
-
-        # --------------------------------------------------------
-        # Run existing plotter
-        # --------------------------------------------------------
-
-        result = plot_exact_slice_from_ellipsoids(
-            ellipsoids,
-            z_plane=z_value,
-            output_path=output_path,
-            alphashape=args.alphashape,
-            alpha=alpha,
-            upper_edge=args.upper_edge,
-            upper_edge_bins=upper_edge_bins,
-            densify_max_segment_length=densify,
-            skip_points=skip_points,
-            xlim=xlim,
-            ylim=ylim,
-        )
-
-        # --------------------------------------------------------
-        # Report
-        # --------------------------------------------------------
-
-        print()
-
-        print(
-            "Exact slice plot completed successfully."
-        )
-
-        print()
-
-        print(
-            f"  Output      = {result['output_path']}"
-        )
-
-        print(
-            f"  z           = {z_value}"
-        )
-
-        print(
-            f"  Ellipses    = {result['num_ellipses']}"
-        )
-
-        print(
-            f"  Alpha pts   = {result['num_alpha_points']}"
-        )
-
-        print(
-            f"  Area        = {result['area']}"
-        )
-
-        print()
-
-    except Exception as exc:
-
-        print(
-            f"[WARNING] Exact slice plot failed: {exc}"
-        )
-
-        if args.continue_on_error:
-            traceback.print_exc()
-        else:
-            raise
-
-
-# ============================================================
-# RENDER VIEW
-# ============================================================
 
 def run_renderview(
-    path,
-    out,
     counter=None,
+    path=None,
+    out=None,
     force=False,
+    **kwargs,
 ):
     """
-    Render 3D particle views from an ellipsoid TRN frame.
+    Render 3D particle views for one TRN frame.
     """
 
-    print("=" * 60)
-    print("3D PARTICLE RENDER")
-    print("=" * 60)
-
-    # --------------------------------------------------------
-    # Counter
-    #
-    # The counter is resolved centrally in main(), exactly
-    # like for the other pipelines.
-    # --------------------------------------------------------
+    data_folder = _resolve_data_folder(path)
 
     if counter is None:
-        raise ValueError(
-            "No timestep/counter available for renderview."
+        counter = _resolve_latest_trn_counter(
+            data_folder
         )
 
-    print(
-        f"TRN counter = {counter:06d}"
+    if counter is None:
+        raise RuntimeError(
+            "Could not determine TRN counter."
+        )
+
+    out_dir = pathlib.Path(
+        out if out else RESULTS_DIR
     )
 
-    # --------------------------------------------------------
-    # Output directory
-    # --------------------------------------------------------
+    render_dir = out_dir / "renderview"
 
-    output_dir = (
-        pathlib.Path(out)
-        / "renderview"
-    )
-
-    output_dir.mkdir(
+    render_dir.mkdir(
         parents=True,
-        exist_ok=True,
+        exist_ok=True
     )
 
-    # --------------------------------------------------------
-    # Cache check
-    # --------------------------------------------------------
+    # ---------------------------------------------------------------
+    # Expected output files
+    # ---------------------------------------------------------------
 
-    expected_files = [
-        output_dir / "particles_3d_isometric.png",
-        output_dir / "particles_3d_top.png",
-        output_dir / "particles_3d_front.png",
-        output_dir / "particles_3d_side.png",
+    expected = [
+        render_dir / f"particles_{counter:06d}_1.png",
+        render_dir / f"particles_{counter:06d}_2.png",
+        render_dir / f"particles_{counter:06d}_3.png",
+        render_dir / f"particles_{counter:06d}_4.png",
     ]
 
     if (
         not force
-        and all(
-            file.exists()
-            for file in expected_files
-        )
+        and all(p.exists() for p in expected)
     ):
-
         print(
-            "[INFO] Rendered views already exist. "
-            "Use --force to regenerate."
+            f"Renderview for counter "
+            f"{counter:06d} already exists. Skipping."
         )
+        return
 
-        for file in expected_files:
-            print(
-                f"  {file}"
-            )
+    # ---------------------------------------------------------------
+    # load_data()
+    #
+    # read_ellipsoid_data.load_data(data="trn", ...)
+    # expects:
+    #
+    #   <path>/ellipsoid_trn/ell_trn_XXXXXX.bin
+    #
+    # Therefore path must be the ellipsoid root.
+    # ---------------------------------------------------------------
 
-        print()
-
-        return {
-            "counter": counter,
-            "output_dir": output_dir,
-            "files": expected_files,
-        }
-
-    # --------------------------------------------------------
-    # Load ellipsoid TRN data
-    # --------------------------------------------------------
-
-    print(
-        f"Loading ellipsoid TRN frame "
-        f"{counter:06d} ..."
+    load_path = _resolve_ellipsoid_root(
+        data_folder
     )
 
-    load_path = pathlib.Path(path)
+    print("Renderview paths:")
+    print(f"  DATA ROOT = {data_folder}")
+    print(f"  LOAD PATH = {load_path}")
+    print(f"  COUNTER   = {counter}")
+    print(f"  OUTPUT    = {render_dir}")
 
-    if load_path.name == "ellipsoid_trn":
-        load_path = load_path.parent
-
-    ellipsoids = load_data(
+    particles = load_data(
         data="trn",
         counter=counter,
-        path=str(load_path),
+        path=load_path,
     )
 
-    if not ellipsoids:
-        raise RuntimeError(
-            f"TRN frame {counter:06d} contains "
-            "no ellipsoids."
-        )
-
-    print(
-        f"Particles = {len(ellipsoids)}"
+    render_particle_views(
+        particles,
+        output_dir=str(render_dir),
+        counter=counter,
     )
 
-    # --------------------------------------------------------
-    # Render
-    # --------------------------------------------------------
 
-    print()
-    print(
-        "Rendering views ..."
-    )
-
-    rendered = render_particle_views(
-        ellipsoids=ellipsoids,
-        output_dir=output_dir,
-    )
-
-    # --------------------------------------------------------
-    # Summary
-    # --------------------------------------------------------
-
-    print()
-    print(
-        "Rendered files:"
-    )
-
-    for view, filename in rendered.items():
-
-        print(
-            f"  {view:10s}: {filename}"
-        )
-
-    print()
-
-    return {
-        "counter": counter,
-        "output_dir": output_dir,
-        "files": rendered,
-    }
-
-
-# ============================================================
+# ============================================================================
 # PIPELINES
-# ============================================================
+# ============================================================================
 
 PIPELINES = {
     "2d": run_2d,
@@ -600,133 +740,281 @@ PIPELINES = {
 }
 
 
-# ============================================================
+# ============================================================================
+# PIPELINE EXECUTION
+# ============================================================================
+
+def run_pipeline(
+    name,
+    func,
+    force=False,
+    kwargs=None,
+):
+    """
+    Execute one pipeline.
+
+    Some older pipeline functions do not accept force=.
+    In that case, retry without force.
+    """
+
+    kwargs = kwargs or {}
+
+    print()
+    print("=" * 60)
+    print(f"Running: {name}")
+    print("=" * 60)
+
+    try:
+        return func(
+            force=force,
+            **kwargs,
+        )
+
+    except TypeError as exc:
+        message = str(exc)
+
+        if (
+            "unexpected keyword argument 'force'"
+            not in message
+        ):
+            raise
+
+        print(
+            f"[INFO] Pipeline '{name}' does not accept "
+            f"force=. Retrying without force."
+        )
+
+        return func(**kwargs)
+
+
+# ============================================================================
+# ARGUMENT PARSER
+# ============================================================================
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run granular_analysis pipelines."
+        )
+    )
+
+    # ---------------------------------------------------------------
+    # Pipeline selection
+    # ---------------------------------------------------------------
+
+    parser.add_argument(
+        "--only",
+        nargs="+",
+        choices=list(PIPELINES.keys()),
+        default=None,
+        help="Run only the specified pipelines.",
+    )
+
+    parser.add_argument(
+        "--exclude",
+        nargs="+",
+        choices=list(PIPELINES.keys()),
+        default=[],
+        help="Exclude specified pipelines.",
+    )
+
+    # ---------------------------------------------------------------
+    # General execution
+    # ---------------------------------------------------------------
+
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force recomputation / overwrite cached outputs.",
+    )
+
+    parser.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        help="Continue with remaining pipelines after an error.",
+    )
+
+    parser.add_argument(
+        "--dry",
+        action="store_true",
+        help="Print planned execution without running pipelines.",
+    )
+
+    # ---------------------------------------------------------------
+    # Paths
+    # ---------------------------------------------------------------
+
+    parser.add_argument(
+        "--path",
+        default=None,
+        help=(
+            "Simulation case root or results directory. "
+            "A case root containing results/ is resolved automatically."
+        ),
+    )
+
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="Output directory.",
+    )
+
+    parser.add_argument(
+        "--folder",
+        default=None,
+        help="Alias for overriding the input data folder.",
+    )
+
+    # ---------------------------------------------------------------
+    # Frame / counter
+    # ---------------------------------------------------------------
+
+    parser.add_argument(
+        "--counter",
+        type=int,
+        default=None,
+        help="Explicit simulation counter.",
+    )
+
+    # ---------------------------------------------------------------
+    # Alpha shape / slices
+    # ---------------------------------------------------------------
+
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=None,
+        help="Alpha-shape parameter.",
+    )
+
+    parser.add_argument(
+        "--alphashape",
+        action="store_true",
+        help="Enable alpha-shape analysis where supported.",
+    )
+
+    parser.add_argument(
+        "--upper_edge",
+        action="store_true",
+        help="Enable upper-edge analysis.",
+    )
+
+    parser.add_argument(
+        "--upper_edge_bins",
+        type=int,
+        default=None,
+        help="Number of bins for upper-edge analysis.",
+    )
+
+    parser.add_argument(
+        "--densify",
+        type=float,
+        default=None,
+    )
+
+    parser.add_argument(
+        "--skip_points",
+        type=int,
+        default=None,
+        help="Number of initial points to skip.",
+    )
+
+    # ---------------------------------------------------------------
+    # Slice geometry
+    # ---------------------------------------------------------------
+
+    parser.add_argument(
+        "--z",
+        type=float,
+        default=None,
+        help="Slice z-coordinate.",
+    )
+
+    parser.add_argument(
+        "--xlim",
+        type=float,
+        nargs=2,
+        default=None,
+        metavar=("XMIN", "XMAX"),
+        help="x-axis limits.",
+    )
+
+    parser.add_argument(
+        "--ylim",
+        type=float,
+        nargs=2,
+        default=None,
+        metavar=("YMIN", "YMAX"),
+        help="y-axis limits.",
+    )
+
+    return parser
+
+
+# ============================================================================
 # MAIN
-# ============================================================
+# ============================================================================
 
-def main(args=None) -> None:
-    """
-    Main orchestrator.
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
 
-    Important:
-        argparse is handled here only when args is None.
-
-    This allows run_all.py to be called normally from the shell
-    while keeping all command-line arguments available through
-    the args namespace.
-    """
-
-    # --------------------------------------------------------
-    # Parse arguments
-    # --------------------------------------------------------
-
-    if args is None:
-        args = build_parser().parse_args()
-
-    # --------------------------------------------------------
-    # Resolve paths
-    # --------------------------------------------------------
+    # ========================================================================
+    # RESOLVE PATHS
+    # ========================================================================
 
     data_folder = _resolve_data_folder(
         args.path
     )
 
-    if args.out:
-
-        out_dir = (
-            pathlib.Path(args.out)
-            .expanduser()
-            .resolve()
+    # --folder explicitly overrides --path
+    if args.folder:
+        data_folder = _resolve_data_folder(
+            args.folder
         )
 
-    else:
-
-        out_dir = (
-            pathlib.Path(RESULTS_DIR)
-            .expanduser()
-            .resolve()
-        )
+    out_dir = pathlib.Path(
+        args.out
+        if args.out
+        else RESULTS_DIR
+    ).expanduser().resolve()
 
     out_dir.mkdir(
         parents=True,
-        exist_ok=True,
+        exist_ok=True
     )
 
-    # --------------------------------------------------------
-    # Apply explicit folder override
-    # --------------------------------------------------------
+    # ========================================================================
+    # PRINT PATHS
+    # ========================================================================
 
-    if args.folder:
-
-        data_folder = str(
-            pathlib.Path(args.folder)
-            .expanduser()
-            .resolve()
-        )
-
-    # --------------------------------------------------------
-    # Print paths
-    # --------------------------------------------------------
-
+    print()
     print("=" * 60)
     print("PATHS")
     print("=" * 60)
 
-    print(
-        f"DATA    = {data_folder}"
-    )
-
-    print(
-        f"RESULTS = {out_dir}"
-    )
+    print(f"DATA    = {data_folder}")
+    print(f"RESULTS = {out_dir}")
 
     print("=" * 60)
     print()
 
-    # --------------------------------------------------------
-    # Dry run
-    # --------------------------------------------------------
-
-    if args.dry:
-
-        print(
-            "DRY RUN"
-        )
-
-        print()
-
-    # --------------------------------------------------------
-    # Determine selected pipelines
-    # --------------------------------------------------------
+    # ========================================================================
+    # SELECT PIPELINES
+    # ========================================================================
 
     if args.only:
-
-        selected = list(
-            args.only
-        )
-
+        selected = list(args.only)
     else:
+        selected = list(PIPELINES.keys())
 
-        selected = list(
-            PIPELINES.keys()
-        )
+    selected = [
+        name
+        for name in selected
+        if name not in args.exclude
+    ]
 
-    # --------------------------------------------------------
-    # Exclude pipelines
-    # --------------------------------------------------------
-
-    if args.exclude:
-
-        selected = [
-            name
-            for name in selected
-            if name not in args.exclude
-        ]
-
-    # --------------------------------------------------------
-    # Validate pipeline names
-    # --------------------------------------------------------
-
+    # Validate
     unknown = [
         name
         for name in selected
@@ -734,51 +1022,72 @@ def main(args=None) -> None:
     ]
 
     if unknown:
-
-        raise ValueError(
-            "Unknown pipeline(s): "
-            + ", ".join(unknown)
-            + "\nAvailable pipelines: "
-            + ", ".join(PIPELINES.keys())
+        parser.error(
+            f"Unknown pipeline(s): {unknown}"
         )
 
-    # --------------------------------------------------------
-    # Collision counter
-    # --------------------------------------------------------
+    if not selected:
+        print("No pipelines selected.")
+        return
+
+    print("Selected pipelines:")
+    for name in selected:
+        print(f"  - {name}")
+
+    print()
+
+    # ========================================================================
+    # COUNTER
+    # ========================================================================
 
     counter = args.counter
 
     if counter is None:
 
+        # Renderview needs TRN
         if "renderview" in selected:
             counter = _resolve_latest_trn_counter(
                 data_folder
             )
 
-            if counter is not None:
-                print(f"TRN counter = {counter}")
-                print()
-
-        else:
+        # Collision distances need a frame for TRN + COLL
+        elif "collision_distances" in selected:
             counter = _resolve_latest_collision_counter(
                 data_folder
             )
 
-            if counter is not None:
-                print(f"Collision counter = {counter}")
-                print()
+        # Slices / slope use a simulation frame as well
+        elif (
+            "slices" in selected
+            or "slope" in selected
+        ):
+            counter = _resolve_latest_trn_counter(
+                data_folder
+            )
 
-    # --------------------------------------------------------
-    # Common kwargs
-    # --------------------------------------------------------
+    if counter is not None:
+        print(
+            f"COUNTER = {counter:06d}"
+        )
+    else:
+        print(
+            "COUNTER = None "
+            "(pipeline may determine its own counter)"
+        )
+
+    print()
+
+    # ========================================================================
+    # COMMON KWARGS
+    # ========================================================================
 
     common_kwargs = {
         "out": str(out_dir),
     }
 
-    # --------------------------------------------------------
-    # Run pipelines
-    # --------------------------------------------------------
+    # ========================================================================
+    # RUN PIPELINES
+    # ========================================================================
 
     errors = []
 
@@ -786,164 +1095,153 @@ def main(args=None) -> None:
 
         func = PIPELINES[name]
 
-        # ------------------------------------------------
-        # Pipeline-specific arguments
-        # ------------------------------------------------
-
         kwargs = dict(
             common_kwargs
         )
 
-        # ------------------------------------------------
+        # --------------------------------------------------------------------
         # 2D
-        # ------------------------------------------------
+        # --------------------------------------------------------------------
 
         if name == "2d":
 
-            kwargs.update(
-                {
-                    "path": data_folder,
-                }
-            )
+            kwargs["path"] = data_folder
 
             if args.z is not None:
-
                 kwargs["z_value"] = args.z
 
-            if args.densify is not None:
-
+            if args.densify:
                 kwargs["densify"] = args.densify
 
             if args.upper_edge_bins is not None:
-
                 kwargs["upper_edge_bins"] = (
                     args.upper_edge_bins
                 )
 
-        # ------------------------------------------------
-        # Slices
-        # ------------------------------------------------
+        # --------------------------------------------------------------------
+        # SLICES
+        # --------------------------------------------------------------------
 
         elif name == "slices":
 
-            kwargs.update(
-                {
-                    "path": data_folder,
-                }
-            )
+            kwargs["path"] = data_folder
 
             if counter is not None:
-
                 kwargs["counter"] = counter
 
-        # ------------------------------------------------
-        # Energy
-        # ------------------------------------------------
+            if args.z is not None:
+                kwargs["z"] = args.z
+
+            if args.alpha is not None:
+                kwargs["alpha"] = args.alpha
+
+            if args.skip_points is not None:
+                kwargs["skip_points"] = (
+                    args.skip_points
+                )
+
+        # --------------------------------------------------------------------
+        # ENERGY
+        # --------------------------------------------------------------------
 
         elif name == "energy":
 
-            kwargs.update(
-                {
-                    "out": str(
-                        out_dir / "energy.csv"
-                    ),
-                }
+            kwargs["out"] = str(
+                out_dir / "energy.csv"
             )
 
-        # ------------------------------------------------
-        # Slope
-        # ------------------------------------------------
+        # --------------------------------------------------------------------
+        # SLOPE
+        # --------------------------------------------------------------------
 
         elif name == "slope":
 
-            kwargs.update(
-                {
-                    "path": data_folder,
-                }
-            )
+            kwargs["path"] = data_folder
 
             if counter is not None:
-
                 kwargs["counter"] = counter
 
-        # ------------------------------------------------
-        # Collision distances
-        # ------------------------------------------------
+        # --------------------------------------------------------------------
+        # COLLISION DISTANCES
+        # --------------------------------------------------------------------
 
         elif name == "collision_distances":
 
-            kwargs.update(
-                {
-                    "path": data_folder,
-                }
+            # IMPORTANT:
+            #
+            # run_collision_distances.py eventually calls:
+            #
+            #   load_data(
+            #       data="trn",
+            #       path=path
+            #   )
+            #
+            # read_ellipsoid_data expects:
+            #
+            #   <path>/ellipsoid_trn/ell_trn_XXXXXX.bin
+            #
+            # Therefore path must be:
+            #
+            #   .../results/ellipsoid
+            #
+            kwargs["path"] = _resolve_ellipsoid_root(
+                data_folder
             )
 
             if counter is not None:
-
                 kwargs["counter"] = counter
 
-        # ------------------------------------------------
-        # Render view
-        # ------------------------------------------------
+        # --------------------------------------------------------------------
+        # RENDERVIEW
+        # --------------------------------------------------------------------
 
         elif name == "renderview":
 
-            kwargs.update(
-                {
-                    "path": data_folder,
-                }
-            )
+            kwargs["path"] = data_folder
 
             if counter is not None:
-
                 kwargs["counter"] = counter
 
-        # ------------------------------------------------
-        # Dry run
-        # ------------------------------------------------
+        # ====================================================================
+        # DRY RUN
+        # ====================================================================
 
         if args.dry:
 
             print("=" * 60)
-            print(
-                f"DRY RUN: {name}"
-            )
+            print(f"DRY RUN: {name}")
             print("=" * 60)
 
-            print(
-                f"Function : {func}"
-            )
+            print(f"FUNCTION = {func}")
+            print(f"FORCE    = {args.force}")
+            print("KWARGS:")
 
-            print(
-                f"force    : {args.force}"
-            )
-
-            print(
-                f"kwargs   : {kwargs}"
-            )
+            for key, value in kwargs.items():
+                print(
+                    f"  {key} = {value}"
+                )
 
             print()
 
             continue
 
-        # ------------------------------------------------
-        # Execute
-        # ------------------------------------------------
+        # ====================================================================
+        # EXECUTE
+        # ====================================================================
 
         try:
 
             run_pipeline(
-                name,
-                func,
+                name=name,
+                func=func,
                 force=args.force,
-                **kwargs,
+                kwargs=kwargs,
             )
 
             print()
             print(
                 f"[OK] Pipeline '{name}' completed."
             )
-            print()
 
         except Exception as exc:
 
@@ -951,55 +1249,99 @@ def main(args=None) -> None:
             print(
                 f"[ERROR] Pipeline '{name}' failed:"
             )
-
             print(
-                exc
+                f"  {type(exc).__name__}: {exc}"
             )
 
-            print()
+            traceback.print_exc()
 
             errors.append(
                 (name, exc)
             )
 
             if not args.continue_on_error:
+                print()
+                print(
+                    "Stopping because "
+                    "--continue-on-error was not specified."
+                )
+                break
 
-                raise
-
-            traceback.print_exc()
-
-    # --------------------------------------------------------
-    # Exact slice plot
-    # --------------------------------------------------------
+    # ========================================================================
+    # EXACT SLICE PLOT
+    # ========================================================================
     #
     # IMPORTANT:
     #
-    # This must NOT run for:
+    # --only 2d
+    #     -> ONLY 2D, no exact slice plot.
     #
-    #     --only energy
+    # --only slices
+    #     -> slices pipeline + exact slice plot.
     #
-    # because the exact slice plot is unrelated to the energy
-    # pipeline and requires slice-specific arguments.
+    # full run
+    #     -> exact slice plot after all selected pipelines.
     #
-    # --------------------------------------------------------
+    # This is orchestration only. No individual pipeline is modified.
+    # ========================================================================
 
-    if (
-        not args.dry
-        and (
-            args.only is None
-            or "2d" in selected
-            or "slices" in selected
-        )
-    ):
+    run_exact_slice = False
 
-        _run_exact_slice_plot(
-            args,
-            out_dir,
-        )
+    if not args.dry:
 
-    # --------------------------------------------------------
-    # Summary
-    # --------------------------------------------------------
+            # Explicit slices selection
+        if (
+            args.only is not None
+            and (
+                "slices" in selected
+                or (
+                    "2d" in selected
+                    and (
+                        args.alphashape
+                        or args.upper_edge
+                    )
+                )
+            )
+        ):
+            run_exact_slice = True
+
+    elif args.only is None:
+        run_exact_slice = True
+
+    if run_exact_slice:
+
+        try:
+
+            _run_exact_slice_plot(
+                args=args,
+                data_folder=data_folder,
+                out_dir=out_dir,
+            )
+
+            print()
+            print(
+                "[OK] Exact slice plot completed."
+            )
+
+        except Exception as exc:
+
+            print()
+            print(
+                "[WARNING] Exact slice plot failed:"
+            )
+            print(
+                f"  {type(exc).__name__}: {exc}"
+            )
+
+            traceback.print_exc()
+
+            errors.append(
+                ("exact_slice_plot", exc)
+            )
+
+    # ========================================================================
+    # SUMMARY
+    # ========================================================================
 
     print()
     print("=" * 60)
@@ -1009,235 +1351,28 @@ def main(args=None) -> None:
     if errors:
 
         print(
-            f"{len(errors)} pipeline(s) failed:"
+            f"Failed steps: {len(errors)}"
         )
 
         for name, exc in errors:
-
             print(
-                f"  - {name}: {exc}"
+                f"  [FAILED] {name}: "
+                f"{type(exc).__name__}: {exc}"
             )
 
     else:
 
         print(
-            "All selected pipelines completed successfully."
+            "All requested steps completed successfully."
         )
 
     print("=" * 60)
+    print()
 
 
-# ============================================================
-# ARGUMENT PARSER
-# ============================================================
-
-def build_parser() -> argparse.ArgumentParser:
-
-    parser = argparse.ArgumentParser(
-        description=(
-            "Run granular collapse post-processing "
-            "pipelines."
-        )
-    )
-
-    # --------------------------------------------------------
-    # Pipeline selection
-    # --------------------------------------------------------
-
-    parser.add_argument(
-        "--only",
-        nargs="+",
-        choices=list(
-            PIPELINES.keys()
-        ),
-        default=None,
-        help=(
-            "Run only the selected pipeline(s). "
-            "Example: --only energy"
-        ),
-    )
-
-    parser.add_argument(
-        "--exclude",
-        nargs="+",
-        choices=list(
-            PIPELINES.keys()
-        ),
-        default=None,
-        help=(
-            "Exclude selected pipeline(s)."
-        ),
-    )
-
-    # --------------------------------------------------------
-    # General execution
-    # --------------------------------------------------------
-
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help=(
-            "Force recomputation even if cached results exist."
-        ),
-    )
-
-    parser.add_argument(
-        "--continue-on-error",
-        action="store_true",
-        help=(
-            "Continue with the remaining pipelines if one "
-            "pipeline fails."
-        ),
-    )
-
-    parser.add_argument(
-        "--dry",
-        action="store_true",
-        help=(
-            "Print what would be executed without running "
-            "the analysis."
-        ),
-    )
-
-    # --------------------------------------------------------
-    # Paths
-    # --------------------------------------------------------
-
-    parser.add_argument(
-        "--path",
-        type=str,
-        default=None,
-        help=(
-            "Input data folder."
-        ),
-    )
-
-    parser.add_argument(
-        "--out",
-        type=str,
-        default=None,
-        help=(
-            "Output directory."
-        ),
-    )
-
-    parser.add_argument(
-        "--folder",
-        type=str,
-        default=None,
-        help=(
-            "Alternative input folder override."
-        ),
-    )
-
-    # --------------------------------------------------------
-    # Collision counter
-    # --------------------------------------------------------
-
-    parser.add_argument(
-        "--counter",
-        type=int,
-        default=None,
-        help=(
-            "Explicit collision counter."
-        ),
-    )
-
-    # --------------------------------------------------------
-    # Alpha shape / slice options
-    # --------------------------------------------------------
-
-    parser.add_argument(
-        "--alpha",
-        type=float,
-        default=None,
-        help=(
-            "Alpha value for alpha-shape calculation."
-        ),
-    )
-
-    parser.add_argument(
-        "--alphashape",
-        action="store_true",
-        default=False,
-        help=(
-            "Enable alpha-shape processing."
-        ),
-    )
-
-    parser.add_argument(
-        "--upper_edge",
-        action="store_true",
-        default=False,
-        help=(
-            "Use upper-edge extraction."
-        ),
-    )
-
-    parser.add_argument(
-        "--upper_edge_bins",
-        type=int,
-        default=None,
-        help=(
-            "Number of bins for upper-edge extraction."
-        ),
-    )
-
-    parser.add_argument(
-        "--densify",
-        type=float,
-        default=None,
-        help=(
-            "Maximum segment length for alpha-shape densification."
-        ),
-    )
-
-    parser.add_argument(
-        "--skip_points",
-        type=int,
-        default=None,
-        help=(
-            "Number of points to skip in slice analysis."
-        ),
-    )
-
-    parser.add_argument(
-        "--z",
-        type=float,
-        default=None,
-        help=(
-            "Slice position in z direction."
-        ),
-    )
-
-    parser.add_argument(
-        "--xlim",
-        nargs=2,
-        type=float,
-        default=None,
-        metavar=("XMIN", "XMAX"),
-        help=(
-            "X-axis limits."
-        ),
-    )
-
-    parser.add_argument(
-        "--ylim",
-        nargs=2,
-        type=float,
-        default=None,
-        metavar=("YMIN", "YMAX"),
-        help=(
-            "Y-axis limits."
-        ),
-    )
-
-    return parser
-
-
-# ============================================================
+# ============================================================================
 # ENTRY POINT
-# ============================================================
+# ============================================================================
 
 if __name__ == "__main__":
     main()
