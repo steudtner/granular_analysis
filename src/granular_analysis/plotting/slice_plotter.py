@@ -11,6 +11,25 @@ from granular_analysis.plotting.helpers import save_figure
 from granular_analysis.geometry.alpha2d import compute_alpha_shape_2d
 from granular_analysis.geometry.ellipsoid import ellipsoid_slice, ellipse_points
 
+import matplotlib.pyplot as plt
+
+plt.rcParams.update({
+    "font.family": "Noto Sans",
+    "font.size": 10,
+
+    "axes.labelsize": 10,
+    "axes.titlesize": 10,
+
+    "xtick.labelsize": 9,
+    "ytick.labelsize": 9,
+
+    "legend.fontsize": 9,
+
+    "svg.fonttype": "none",
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
+})
+
 
 def _extract_upper_edge(
     shape_coords: np.ndarray,
@@ -197,8 +216,8 @@ def plot_exact_slice_from_ellipsoids(
                 shape_coords[:, 0],
                 shape_coords[:, 1],
                 color="tab:blue",
-                alpha=0.12,
-                label="Alpha Shape"
+                alpha=0.4,
+                label="Alpha-shape"
             )
 
             ax.plot(
@@ -233,7 +252,7 @@ def plot_exact_slice_from_ellipsoids(
                         color="red",
                         linewidth=2,
                         linestyle="-",
-                        label="Upper edge"
+                        label="Oberkante"
                     )
 
     # ------------------------------------------------------------------
@@ -283,8 +302,8 @@ def plot_exact_slice_from_ellipsoids(
     # ------------------------------------------------------------------
     # Axes
     # ------------------------------------------------------------------
-    ax.set_xlabel(r"$\text{x}/D_{\mathrm{Eq}}$")
-    ax.set_ylabel(r"$\text{y}/D_{\mathrm{Eq}}$")
+    ax.set_xlabel(r"x/$D_{\mathrm{Eq}}$")
+    ax.set_ylabel(r"y/$D_{\mathrm{Eq}}$")
 
     ax.set_xticks(
         np.arange(
