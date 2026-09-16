@@ -396,13 +396,7 @@ def _add_domain_box(
         bounds=bounds,
     )
 
-    plotter.add_mesh(
-        domain,
-        style="wireframe",
-        color="black",
-        line_width=1.0,
-        opacity=0.35,
-    )
+
 
 
 # ============================================================
