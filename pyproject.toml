@@ -4,11 +4,45 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "granular-analysis"
-version = "0.1.0"
+version = "0.2.0"
+description = "Post-processing tools for ellipsoid granular simulations"
+readme = "README.md"
+requires-python = ">=3.9"
 dependencies = [
-    "numpy", "pandas", "matplotlib", "shapely",
-    "alphashape", "scipy", "trimesh", "scikit-learn",
+    "alphashape",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "scipy",
+    "scikit-learn>=1.2",
+    "shapely",
 ]
+
+[project.optional-dependencies]
+render = ["pyvista"]
+mesh = ["trimesh"]
+progress = ["tqdm"]
+dev = ["pytest", "ruff", "trimesh"]
+
+[project.scripts]
+granular-analyze = "granular_analysis.scripts.run_all:main"
+granular-compare-slopes = "granular_analysis.scripts.compare_slope_methods:main"
+granular-collapse = "granular_analysis.scripts.run_collapse_analysis:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+exclude = ["granular_analysis.tests*"]
+
+[tool.setuptools.package-data]
+"granular_analysis.scripts" = ["*.R"]
+
+[tool.setuptools.exclude-package-data]
+"granular_analysis" = ["tests/*.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "src/granular_analysis/tests"]
+addopts = "-ra"
+filterwarnings = [
+    "ignore::DeprecationWarning:pyparsing",
+    "ignore:The matrix subclass is not the recommended way:PendingDeprecationWarning",
+]

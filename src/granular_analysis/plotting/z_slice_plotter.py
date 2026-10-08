@@ -11,6 +11,8 @@ z_slice_plotter – Plot‑Utilities für 2‑D‑Schnitte aus Partikel‑Daten.
 
 from __future__ import annotations
 
+from granular_analysis.plotting import plotstyle
+
 import pathlib
 import numpy as np
 import matplotlib.pyplot as plt
@@ -18,7 +20,6 @@ import matplotlib.pyplot as plt
 # ----------------------------------------------------------------------
 # Paketinterner Pfad, in dem alle Ergebnis‑Files abgelegt werden
 # ----------------------------------------------------------------------
-from granular_analysis.config import RESULTS_DIR   # wird in allen Modulen verwendet
 from granular_analysis.plotting.helpers import save_figure
 
 # ----------------------------------------------------------------------
@@ -93,7 +94,7 @@ def plot_z_slice(
     # --------------------------------------------------------------
     # 2️⃣  Matplotlib‑Figure anlegen
     # --------------------------------------------------------------
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(plotstyle.figwidth_full, 6))
 
     # --------------------------------------------------------------
     # 3️⃣  Plot‑Logik
@@ -110,7 +111,7 @@ def plot_z_slice(
                 shape_coords[:, 0],
                 shape_coords[:, 1],
                 color="tab:blue",
-                linewidth=2,
+                linewidth=1.2,
                 label="Alpha Shape",
             )
             ax.fill(
@@ -120,7 +121,7 @@ def plot_z_slice(
                 alpha=0.2,
             )
             # Legende nur bei Alpha‑Shape
-            ax.legend(loc="upper right")
+            plotstyle.legend_above(ax)
         else:
             # Fallback: nur Punkte
             ax.scatter(pts_xy[:, 0], pts_xy[:, 1], c="black", s=20, edgecolor="none")
@@ -129,8 +130,8 @@ def plot_z_slice(
         ax.scatter(pts_xy[:, 0], pts_xy[:, 1], c="black", s=20, edgecolor="none")
 
         # Achsenbeschriftungen in LaTeX
-        ax.set_xlabel(r"$x/D_p$", fontsize=12)
-        ax.set_ylabel(r"$y/D_p$", fontsize=12)
+        ax.set_xlabel(r"$x/D_p$", fontsize=10)
+        ax.set_ylabel(r"$y/D_p$", fontsize=10)
 
         # Ticks alle 5 Einheiten (automatisch an Daten anpassen)
         x_min, x_max = ax.get_xlim()
@@ -155,6 +156,7 @@ def plot_z_slice(
     ax.set_aspect("equal")
     ax.grid(True, linestyle="--", alpha=0.6)
     ax.set_title("")                     # keine Überschrift
+    plotstyle.prepare_figure(plt.gcf())
     plt.tight_layout()
 
     # --------------------------------------------------------------

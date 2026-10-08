@@ -6,6 +6,8 @@ from case name to data folder.
 """
 from __future__ import annotations
 
+from granular_analysis.plotting import plotstyle
+
 import os
 from typing import Dict, Tuple, Optional
 
@@ -41,8 +43,9 @@ def _iter_with_progress(items, desc: str, show: bool):
 
     return gen()
 
-from granular_analysis.config import RESULTS_DIR, LZ, ALPHA_2D, USE_PARTICLE_SKIP, SKIP_FIRST_PARTICLES
-from granular_analysis.io.loader import load_last_frame, load_frame, load_frame_by_time, filter_particles
+from granular_analysis.config import RESULTS_DIR, Z_LEVELS, LZ, ALPHA_2D, USE_PARTICLE_SKIP, SKIP_FIRST_PARTICLES
+from granular_analysis.paths import CasePaths
+from granular_analysis.io.loader import load_frame, load_frame_by_time, filter_particles
 
 # Reuse existing analysers where convenient
 from granular_analysis.scripts.run_slice_comparison import compute_2d_slice_summary
@@ -50,7 +53,6 @@ from granular_analysis.scripts.run_energy_analysis import compute_energy_datafra
 from granular_analysis.analysis.porosity2d import compute_slice_porosity
 from granular_analysis.geometry.alpha_utils import densify_polygon
 from granular_analysis.plotting.plots import plot_profile, plot_energy_time_series
-from granular_analysis.plotting.slice_plotter import plot_exact_slice_from_ellipsoids
 
 
 def _ensure_outdir(path: str | None, sub: str) -> str:
@@ -86,7 +88,12 @@ def compare_porosity_z(cases: Dict[str, str], out_dir: str | None = None, *, sli
 
         # apply default filtering (use config flags to skip initial particles)
         pts = filter_particles(ell, USE_PARTICLE_SKIP, SKIP_FIRST_PARTICLES)
-        df = compute_2d_slice_summary(pts)
+        df = compute_2d_slice_summary(
+            pts,
+            Z_LEVELS,
+            alpha=ALPHA_2D,
+            skip_first=0,
+        )
         dfs[name] = df
 
         # save per-case CSV
@@ -98,7 +105,7 @@ def compare_porosity_z(cases: Dict[str, str], out_dir: str | None = None, *, sli
     if include_alpha:
         # determine default slice_z (use provided or config LZ/2)
         z0 = slice_z if slice_z is not None else float(LZ) / 2.0
-        fig, ax = plt.subplots(figsize=(10, 4))
+        fig, ax = plt.subplots(figsize=(plotstyle.figwidth_full, 4))
         case_items = list(cases.items())
         iter_cases = _iter_with_progress(case_items, desc=f"Alpha shapes @ z={z0:.2f}", show=show_progress)
         for name, folder in iter_cases:
@@ -124,9 +131,10 @@ def compare_porosity_z(cases: Dict[str, str], out_dir: str | None = None, *, sli
         ax.set_title(f"Alpha shape comparison at z={z0:.3f}")
         ax.grid(True)
         ax.legend()
+        plotstyle.prepare_figure(fig)
         fig.tight_layout()
         png = os.path.join(outdir, "porosity_z_alphashape_comparison.png")
-        fig.savefig(png, dpi=200)
+        plotstyle.export_figure(fig, png, dpi=200)
         plt.close(fig)
         print(f"Saved alpha-shape comparison to {png}")
 
@@ -146,15 +154,16 @@ def compare_porosity_z(cases: Dict[str, str], out_dir: str | None = None, *, sli
 
         # combined overlay plot
         png = os.path.join(outdir, "porosity_z_comparison.png")
-        fig, ax = plt.subplots(figsize=(8, 5))
+        fig, ax = plt.subplots(figsize=(plotstyle.figwidth_full, 5))
         for name, df in dfs.items():
             ax.plot(df["z"], df["porosity"], marker="o", label=name)
         ax.set_xlabel("z")
         ax.set_ylabel("porosity")
         ax.grid(True)
         ax.legend()
+        plotstyle.prepare_figure(fig)
         fig.tight_layout()
-        fig.savefig(png, dpi=200)
+        plotstyle.export_figure(fig, png, dpi=200)
         plt.close(fig)
 
         print(f"Saved comparison CSV to {combined_csv} and plot to {png}")
@@ -193,13 +202,11 @@ def compare_kinetic_energy(cases: Dict[str, str], out_dir: str | None = None, n_
     t_min, t_max = None, None
 
     # Determine whether physical normalization is available for ALL cases
-    from pathlib import Path
     use_physical_all = True
     case_input_paths = {}
     for name, folder in cases.items():
         try:
-            p = Path(folder).resolve()
-            case_root = p.parent.parent.parent
+            case_root = CasePaths.from_input(folder).case_root
             input_paths = {
                 "global": case_root / "input.dat",
                 "ellipsoid": case_root / "input_ellipsoid_data.dat",
@@ -262,7 +269,7 @@ def compare_kinetic_energy(cases: Dict[str, str], out_dir: str | None = None, n_
             pass
 
     # Combined plot: use same styling as plot_energy_time_series for visual parity
-    fig, ax = plt.subplots(figsize=(12, 4))
+    fig, ax = plt.subplots(figsize=(plotstyle.figwidth_full, 4))
     iter_plot = _iter_with_progress(list(dfs.items()), desc="Energy: resample/plot", show=show_progress)
 
     all_x_min, all_x_max = None, None
@@ -272,7 +279,7 @@ def compare_kinetic_energy(cases: Dict[str, str], out_dir: str | None = None, n_
         if df.empty:
             continue
         xg, yg = _interpolate_series(df, "time_norm", "kinetic_energy_norm", x_grid)
-        ax.plot(xg, yg, linewidth=2, label=name)
+        ax.plot(xg, yg, linewidth=1.2, label=name)
         out_csv = os.path.join(outdir, f"{name}_kinetic_energy_norm.csv")
         pd.DataFrame({"time_norm": xg, "kinetic_energy_norm": yg}).to_csv(out_csv, index=False)
         combined_rows.append(pd.DataFrame({"time_norm": xg, "kinetic_energy_norm": yg, "case": name}))
@@ -287,13 +294,13 @@ def compare_kinetic_energy(cases: Dict[str, str], out_dir: str | None = None, n_
 
     # set labels consistent with per-case plots
     if use_physical_all:
-        ax.set_xlabel(r"$t \sqrt{g / D_{\mathrm{Eq}}}$", fontsize=14)
-        ax.set_ylabel(r"$\sum E_{kin} / (\rho g D_{\mathrm{Eq}}^4)$", fontsize=14)
-        ax.set_title("Normalized kinetic energy over time", fontsize=14)
+        ax.set_xlabel(r"$t g^{1/2} D_{\mathrm{Eq}}^{-1/2}$", fontsize=10)
+        ax.set_ylabel(r"$\sum E_{kin} \,\rho^{-1} g^{-1} D_{\mathrm{Eq}}^{-4}$", fontsize=10)
+        ax.set_title("Normalized kinetic energy over time", fontsize=10)
     else:
-        ax.set_xlabel("time", fontsize=12)
-        ax.set_ylabel("kinetic energy", fontsize=12)
-        ax.set_title("Total kinetic energy over time", fontsize=12)
+        ax.set_xlabel("time", fontsize=10)
+        ax.set_ylabel("kinetic energy", fontsize=10)
+        ax.set_title("Total kinetic energy over time", fontsize=10)
 
     # apply axis limits based on union of per-case ranges for consistent view
     if all_x_min is not None and all_x_max is not None:
@@ -303,10 +310,11 @@ def compare_kinetic_energy(cases: Dict[str, str], out_dir: str | None = None, n_
         ax.set_ylim(max(0.0, all_y_min - pad), all_y_max + pad)
 
     ax.grid(True)
-    ax.legend(fontsize=12)
+    ax.legend(fontsize=10)
+    plotstyle.prepare_figure(fig)
     fig.tight_layout()
     png = os.path.join(outdir, "kinetic_energy_comparison.png")
-    fig.savefig(png, dpi=300)
+    plotstyle.export_figure(fig, png, dpi=300)
     plt.close(fig)
 
     if combined_rows:

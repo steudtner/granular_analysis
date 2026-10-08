@@ -1,10 +1,22 @@
 """Plotting routines for segmented slope analysis."""
+
+from granular_analysis.plotting import plotstyle
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
-from matplotlib import cm  # for colour cycling (kept from previous fix)
+from granular_analysis.plotting.helpers import viridis_palette
+
+
+def _aicc_from_row(row):
+    """Use the exported correction, or calculate it from explicit fit metadata."""
+    if 'aicc' in row:
+        return float(row['aicc'])
+    n, k = row.get('n', np.nan), row.get('k', np.nan)
+    if np.isfinite(n) and np.isfinite(k) and n > k + 1:
+        return float(row['aic']) + 2 * k * (k + 1) / (n - k - 1)
+    return np.nan
 
 
 # ----------------------------------------------------------------------
@@ -12,7 +24,7 @@ from matplotlib import cm  # for colour cycling (kept from previous fix)
 # ----------------------------------------------------------------------
 def _plot_single_model(
     x, z, model, out_path, xlim=(0, 60), ylim=(0, 20),
-    color="blue", dpi=600
+    color="blue", dpi=600, alpha=None
 ):
     """
     Create a publication‑quality plot for one model.
@@ -21,12 +33,12 @@ def _plot_single_model(
     * Piece‑wise (or simple linear) fit in *color*
     * Breakpoint vertical lines (if any)
     * Upper‑right annotation with **slope** and **angle** for each segment
-    * Left‑hand annotation with **AIC** and **BIC**
+    * Left‑hand annotation with **AIC**, **AICc** and **BIC**
     """
     x = np.asarray(x, dtype=float)
     z = np.asarray(z, dtype=float)
 
-    fig, ax = plt.subplots(figsize=(8, 3))
+    fig, ax = plt.subplots(figsize=(plotstyle.figwidth_full, 3))
 
     # --------------------------------------------------------------
     # 1️⃣  Raw data points
@@ -53,7 +65,7 @@ def _plot_single_model(
     if n_bp == 0:                                 # simple linear
         x_line = np.linspace(xlim[0], xlim[1], 100)
         y_line = model["intercept"] + model["slopes"][0] * x_line
-        ax.plot(x_line, y_line, color=color, linewidth=3, zorder=2)
+        ax.plot(x_line, y_line, color=color, linewidth=1.2, zorder=2)
     else:                                          # segmented regression
         x_line = np.linspace(xlim[0], xlim[1], 500)
         y_line = model["intercept"] + model["slopes"][0] * x_line
@@ -64,12 +76,12 @@ def _plot_single_model(
                 delta = model["slopes"][i + 1] - model["slopes"][i]
                 y_line = y_line + delta * np.maximum(0, x_line - bp)
 
-        ax.plot(x_line, y_line, color=color, linewidth=3, zorder=2)
+        ax.plot(x_line, y_line, color=color, linewidth=1.2, zorder=2)
 
         # vertical lines marking the breakpoints
         for bp in model["breakpoints"]:
             ax.axvline(x=bp, color="black", linestyle="--",
-                       linewidth=1.5, zorder=1)
+                       linewidth=1.2, zorder=1)
 
     # --------------------------------------------------------------
     # 4️⃣  Slope / angle annotation (upper right)
@@ -102,14 +114,27 @@ def _plot_single_model(
     # --------------------------------------------------------------
     # 6️⃣  Axis labels
     # --------------------------------------------------------------
-    ax.set_xlabel(r"$x / D_{Eq}$", fontsize=14)
-    ax.set_ylabel(r"$z / D_{Eq}$", fontsize=14)
+    ax.set_xlabel(r"$x\,D_{Eq}^{-1}$", fontsize=10)
+    ax.set_ylabel(r"$z\,D_{Eq}^{-1}$", fontsize=10)
     ax.set_xlim(*xlim)
     ax.set_ylim(*ylim)
-    ax.tick_params(axis="both", labelsize=11)
+    ax.tick_params(axis="both", labelsize=10)
+    aicc = _aicc_from_row(model)
+    aicc_label = f"{aicc:.1f}" if np.isfinite(aicc) else "N/A"
+    annotation = (
+        (rf"$\alpha = {alpha:.1f}$" + "\n" if alpha is not None else "")
+        + f"AIC = {model['aic']:.1f}\nAICc = {aicc_label}\nBIC = {model['bic']:.1f}"
+    )
+    ax.text(
+        0.98, 0.95, annotation,
+        transform=ax.transAxes, ha="right", va="top", fontsize=10,
+        bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "alpha": 0.85},
+    )
+
+    plotstyle.prepare_figure(plt.gcf())
 
     plt.tight_layout()
-    plt.savefig(out_path, dpi=dpi)
+    plotstyle.export_figure(plt.gcf(), out_path, dpi=dpi)
     plt.close()
 
 
@@ -117,7 +142,7 @@ def _plot_single_model(
 # Helper: plot *all* models and also dump a richer console table
 # ----------------------------------------------------------------------
 def plot_all_models_from_csv(csv_path, out_dir, x_data, z_data,
-                             xlim=(0, 60), ylim=(0, 20)):
+                             xlim=(0, 60), ylim=(0, 20), alpha=None):
     """
     Read the R‑generated CSV, plot each model, and print a full table that
     includes:
@@ -138,8 +163,8 @@ def plot_all_models_from_csv(csv_path, out_dir, x_data, z_data,
     # Colour palette – ensure we have at least as many colours as models
     # --------------------------------------------------------------
     n_models = len(df)
-    base = cm.tab10(np.linspace(0, 1, 10))          # 10 distinct colours
-    colours = np.resize(base, (n_models, 4))       # repeat if >10 models
+    base = viridis_palette()  # six colours, omitting Viridis' upper 20%
+    colours = np.resize(base, (n_models, 4))
 
     # --------------------------------------------------------------
     # Header for the console table
@@ -166,6 +191,7 @@ def plot_all_models_from_csv(csv_path, out_dir, x_data, z_data,
             'angles_deg': [float(x) for x in row['angles_deg'].split(';')],
             'aic': float(row['aic']),
             'bic': float(row['bic']),
+            'aicc': _aicc_from_row(row),
             'intercept': float(row['intercept'])
         }
 
@@ -194,6 +220,7 @@ def plot_all_models_from_csv(csv_path, out_dir, x_data, z_data,
             _plot_single_model(
                 x_data, z_data, model_info,
                 out_path, xlim, ylim, color=colour
+                , alpha=alpha
             )
             print(f"✅  Saved plot for {model_info['model']} → {out_path}")
         except Exception as exc:

@@ -7,3 +7,6 @@ results_granular_analysis/
 *.csv
 *.ply
 results_granular_analysis/
+
+# Local portable TeX/tool installations
+.tools/

@@ -25,3 +25,14 @@ def rotational_energy(mass, semi_axes, angular_velocity):
 def normalize_energy(E, rho_ref, g):
     """Normalize energy by reference density and gravity."""
     return E / (rho_ref * g)
+
+
+def translational_rotational_ratio(translational, rotational):
+    """Ratio of summed energies; undefined denominators yield NaN."""
+    translational, rotational = np.broadcast_arrays(
+        np.asarray(translational, dtype=float), np.asarray(rotational, dtype=float)
+    )
+    ratio = np.full(translational.shape, np.nan)
+    valid = np.isfinite(translational) & np.isfinite(rotational) & (rotational > 0)
+    np.divide(translational, rotational, out=ratio, where=valid)
+    return ratio

@@ -16,7 +16,7 @@ import pandas as pd
 # ----------------------------------------------------------------------
 # Paketinterne Imports
 # ----------------------------------------------------------------------
-from granular_analysis.config import RESULTS_DIR                # ← Ergebnis‑Ordner
+from granular_analysis.config import FOLDER, RESULTS_DIR                # ← Ergebnis‑Ordner
 from granular_analysis.io.loader import read_ellipsoid_trn   # ← dein Daten‑Lader
 from granular_analysis.plotting.slice_plotter import plot_exact_slice_from_ellipsoids
 
@@ -24,9 +24,8 @@ from granular_analysis.plotting.slice_plotter import plot_exact_slice_from_ellip
 # Konstanten (können über CLI‑Argumente überschrieben werden)
 # ----------------------------------------------------------------------
 DEFAULTS = {
-    "folder": "/data/horse/ws/s4713238-DA/DiscretizationGranularCollapse/primeJainSU/results/ellipsoid/ellipsoid_trn",
+    "folder": FOLDER,
     "alpha": 0.6,
-    "min_spread": 1e-8,
     "skip_points": 1000,
     "z": 2.5,
     "xlim": (0, 60),
@@ -59,7 +58,6 @@ def main(args: argparse.Namespace) -> None:
     # --------------------------------------------------------------
     folder      = args.folder or DEFAULTS["folder"]
     alpha       = args.alpha
-    min_spread  = args.min_spread
     skip_points = args.skip_points
     z_plane     = args.z if args.z is not None else DEFAULTS["z"]
     xlim        = tuple(args.xlim) if args.xlim else DEFAULTS["xlim"]
@@ -93,9 +91,6 @@ def main(args: argparse.Namespace) -> None:
 
     if pts_all.shape[0] < 5:
         raise RuntimeError("Zu wenige Punkte für die Analyse vorhanden.")
-
-    # Als Alternative für die Alphashape: überspringe nur die ersten Ellipsoide
-    ellipsoids_alpha = ellipsoids[skip_points:] if len(ellipsoids) > skip_points else []
 
     # Ergebnis‑Liste für CSV
     results = []
@@ -170,12 +165,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Anzahl Bins für die Oberkanten‑Extraktion.",
     )
     # Numerische Stabilisierung & Daten‑Reduktion
-    parser.add_argument(
-        "--min_spread",
-        type=float,
-        default=DEFAULTS["min_spread"],
-        help="Kleinste zufällige Verschiebung, falls Punkte kollinear sind.",
-    )
     parser.add_argument(
         "--skip_points",
         type=int,

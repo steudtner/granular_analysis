@@ -1,11 +1,15 @@
+import warnings
+
 import numpy as np
 from typing import Optional
 import alphashape
-from shapely.geometry import Polygon, MultiPolygon
+from shapely.geometry import Polygon
 
 from granular_analysis.geometry.alpha_utils import _largest_polygon, convex_hull_coords, densify_polygon
+from granular_analysis.geometry.alpha_logging import summarize_alpha_warnings
 
 
+@summarize_alpha_warnings()
 def compute_alpha_shape_2d(points, alpha=None, densify_max_segment_length: Optional[float] = None, max_points: int = 8000):
     """Compute a robust 2D alpha-shape from `points`.
 
@@ -62,10 +66,11 @@ def compute_alpha_shape_2d(points, alpha=None, densify_max_segment_length: Optio
         return coords, area
 
     except Exception as exc:
-        try:
-            print(f"alpha2d: alphashape failed: {exc}")
-        except Exception:
-            pass
+        warnings.warn(
+            f"Alpha-shape calculation failed; using the convex hull instead: {exc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     # Fallback: convex hull
     coords, area = convex_hull_coords(pts2)

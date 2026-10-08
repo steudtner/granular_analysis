@@ -1,21 +1,15 @@
 import os
 import numpy as np
 
+from granular_analysis.paths import CasePaths, output_directory
+
 
 def _default_data_folder() -> str:
-    return os.path.join(
-        os.getcwd(),
-        "results",
-        "ellipsoid",
-        "ellipsoid_trn",
-    )
+    return str(CasePaths.from_input(os.getcwd()).trn)
 
 
 def _default_results_dir() -> str:
-    return os.path.join(
-        os.getcwd(),
-        "results_granular_analysis",
-    )
+    return str(output_directory())
 
 
 # ============================================================
@@ -56,9 +50,11 @@ Z_LEVELS = np.round(
 )
 
 USE_PARTICLE_SKIP = True
-SKIP_FIRST_PARTICLES = 1000
+SKIP_FIRST_PARTICLES = 2000
 
 D_EQ = 1.0
+# Physical scale for input-particle DIN size distributions.
+PARTICLE_LENGTH_UNIT_MM = 0.615
 
 
 # ============================================================

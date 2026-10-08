@@ -23,6 +23,7 @@ import numpy as np
 import pyvista as pv
 
 from granular_analysis.config import RENDER_BOUNDS
+from granular_analysis.plotting import plotstyle
 
 from granular_analysis.geometry.ellipsoid import _rotation_matrix
 
@@ -384,22 +385,6 @@ def _set_camera(
 
 
 # ============================================================
-# DOMAIN BOX
-# ============================================================
-
-def _add_domain_box(
-    plotter: pv.Plotter,
-    bounds,
-):
-
-    domain = pv.Box(
-        bounds=bounds,
-    )
-
-
-
-
-# ============================================================
 # SINGLE VIEW
 # ============================================================
 
@@ -503,15 +488,6 @@ def render_particle_view(
     )
 
     # --------------------------------------------------------
-    # Domain box
-    # --------------------------------------------------------
-
-    _add_domain_box(
-        plotter,
-        bounds,
-    )
-
-    # --------------------------------------------------------
     # Camera
     # --------------------------------------------------------
 
@@ -527,11 +503,21 @@ def render_particle_view(
     # Render directly to final PNG
     # --------------------------------------------------------
 
-    plotter.screenshot(
-        str(output_path)
-    )
-
+    image = plotter.screenshot(str(output_path))
     plotter.close()
+
+    # A shaded 3D screenshot remains raster content inside the PDF/SVG pair.
+    # Preserve its aspect ratio at the final 160-mm print width.
+    import matplotlib.pyplot as plt
+    height = plotstyle.figwidth_full * image.shape[0] / image.shape[1]
+    fig = plt.figure(figsize=(plotstyle.figwidth_full, height))
+    ax = fig.add_axes((0, 0, 1, 1))
+    ax.imshow(image)
+    ax.set_axis_off()
+    try:
+        plotstyle.export_figure(fig, output_path.with_suffix('.pdf'))
+    finally:
+        plt.close(fig)
 
 
 # ============================================================
@@ -550,6 +536,7 @@ def render_particle_views(
         3500,
     ),
     views: Optional[Tuple[str, ...]] = None,
+    filename_prefix: str = "particles_3d",
 ):
     """
     Render all requested 3D views.
@@ -646,7 +633,7 @@ def render_particle_views(
 
         output_path = (
             output_dir
-            / f"particles_3d_{view}.png"
+            / f"{filename_prefix}_{view}.png"
         )
 
         print(

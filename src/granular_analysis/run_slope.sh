@@ -1,23 +1,13 @@
-#!/bin/bash
-# ============================================================
-# Automatisches Start-Skript für die Slope-Analyse (Python + R)
-# ============================================================
+#!/usr/bin/env bash
+set -euo pipefail
 
-# 1. Module laden (wichtig: in dieser Reihenfolge)
-module purge
-module load release/2026
-module load GCC/14.2.0
-module load R/4.5.1
+case_path="${1:-.}"
+output_path="${2:-}"
+python_bin="${PYTHON:-python}"
 
-# 2. Python Virtualenv aktivieren
-source /data/horse/ws/s4713238-DA/envRomeo/bin/activate
+args=(--path "$case_path" --only 2d slope --force --alphashape --upper-edge)
+if [[ -n "$output_path" ]]; then
+    args+=(--out "$output_path")
+fi
 
-# 3. In das Verzeichnis des Simulationsfalls wechseln
-cd /data/horse/ws/s4713238-DA/DiscretizationGranularCollapse/primeJainSU
-
-# 4. Pipeline starten (nutzt explizit den Python der Virtualenv, 
-#    um Konflikte mit dem System-Python zu vermeiden)
-echo "Starting granular analysis pipeline..."
-/data/horse/ws/s4713238-DA/envRomeo/bin/python -m granular_analysis.scripts.run_all --only 2d slope --force
-
-echo "Done."
+exec "$python_bin" -m granular_analysis.scripts.run_all "${args[@]}"

@@ -23,7 +23,7 @@ def _stitch_restart_segments(data):
 
 
 def get_monitor_files(folder):
-    """Return monitor files ordered by their numeric ellipsoid ID."""
+    """Return monitor files ordered by their one-based input particle row."""
     folder = Path(folder)
     files = []
     for path in folder.glob("ell_*_monitor.dat"):
@@ -36,11 +36,21 @@ def get_monitor_files(folder):
     return files
 
 
+def monitor_source_paths(path):
+    """Return an optional immutable history segment followed by the live file."""
+    path = Path(path)
+    history = path.parent / "history" / path.name
+    return [history, path] if history.is_file() else [path]
+
+
 def read_monitor_file(path):
-    """Read one monitor file as an array with 11 documented columns."""
-    data = np.loadtxt(path, ndmin=2)
-    if data.shape[1] != 11:
-        raise ValueError(
-            f"Expected 11 columns in {path}, found {data.shape[1]}"
-        )
-    return _stitch_restart_segments(data)
+    """Read the complete history, with current data winning at a restart."""
+    segments = []
+    for source in monitor_source_paths(path):
+        data = np.loadtxt(source, ndmin=2)
+        if data.shape[1] != 11:
+            raise ValueError(
+                f"Expected 11 columns in {source}, found {data.shape[1]}"
+            )
+        segments.append(data)
+    return _stitch_restart_segments(np.concatenate(segments, axis=0))

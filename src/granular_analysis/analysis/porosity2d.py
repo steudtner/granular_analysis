@@ -1,4 +1,5 @@
 import os
+import logging
 import numpy as np
 import pandas as pd
 
@@ -26,11 +27,14 @@ def compute_slice_porosity(
     n_bins: int = 50,
     skip_first: int = 0,
     output_dir: str = None,
+    write_upper_edge: bool = False,
+    clip_solid_to_shape: bool = False,
 ):
     """Compute 2D slice porosity from a particle set.
 
     Slices all particles at the plane z=z0 and computes
-    the 2D alpha-shape porosity.
+    the 2D alpha-shape porosity. Each ellipse contour uses 720 points
+    to keep the polygonal area error small (about 1.3e-5 for circles).
 
     Uses periodic boundary conditions in z-direction
     (slices with shifts -lz, 0, lz).
@@ -84,6 +88,7 @@ def compute_slice_porosity(
                 ax_e,
                 by_e,
                 theta=theta,
+                n=720,
             )
 
             pts.append(ellipse)
@@ -143,9 +148,9 @@ def compute_slice_porosity(
         else 0.0
     )
 
-    print(
-        f"Slice points: {pts.shape[0]}; "
-        f"alpha-shape points: {alpha_pts.shape[0]}"
+    logging.getLogger(__name__).debug(
+        "Slice z=%s: %s points; %s alpha-shape points",
+        z0, pts.shape[0], alpha_pts.shape[0],
     )
 
     # --------------------------------------------------
@@ -160,13 +165,18 @@ def compute_slice_porosity(
         ),
     )
 
+    # A porosity control volume must count only solid inside that volume.
+    # Keep the legacy behavior unless the caller explicitly selects clipping.
+    if clip_solid_to_shape and shape is not None and len(shape) >= 3:
+        A_ell = float(unary_union(alpha_polygons).intersection(Polygon(shape)).area)
+
     # --------------------------------------------------
     # UPPER EDGE
     # --------------------------------------------------
 
     if (
         shape is not None
-        and abs(z0 - 2.5) < 1e-6
+        and write_upper_edge
         and output_dir is not None
     ):
         extract_upper_edge(
@@ -180,6 +190,7 @@ def compute_slice_porosity(
     # --------------------------------------------------
 
     return {
+        **surface_metrics(shape),
         "shape": shape,
         "A_ell": A_ell,
         "A_alpha": A_alpha,
@@ -203,149 +214,58 @@ def compute_slice_porosity(
     }
 
 
-def extract_upper_edge(
-    shape_coords,
-    n_bins=50,
-    output_dir=None,
-):
-    """Extract the upper edge from a closed 2D alpha-shape polygon.
+def surface_metrics(shape_coords):
+    """Spatial extents of the slice boundary, in simulation length units.
 
-    Bins the x-axis into n_bins intervals and takes
-    the maximum y-value in each bin.
-
-    Bins with a deviation greater than 2.0 from
-    the previous valid bin are skipped.
+    Runout is the full x extent, and remaining height is measured above y=0.
+    These describe one frame, not a maximum over simulation time.
     """
+    if shape_coords is None or len(shape_coords) < 3:
+        return dict(x_min=None, x_max=None, max_runout_length=None, remaining_height=None)
+    coords = np.asarray(shape_coords, dtype=float)
+    if not np.isfinite(coords).all():
+        raise ValueError("Surface coordinates must be finite")
+    x_min, x_max = float(coords[:, 0].min()), float(coords[:, 0].max())
+    return dict(x_min=x_min, x_max=x_max, max_runout_length=x_max-x_min,
+                remaining_height=float(coords[:, 1].max()))
 
-    if output_dir is None:
-        raise ValueError(
-            "output_dir must be provided to "
-            "extract_upper_edge()."
-        )
 
-    # --------------------------------------------------
-    # OUTPUT DIRECTORY
-    # --------------------------------------------------
-
-    output_dir = os.path.abspath(
-        output_dir
-    )
-
-    os.makedirs(
-        output_dir,
-        exist_ok=True,
-    )
-
-    # --------------------------------------------------
-    # COORDINATES
-    # --------------------------------------------------
-
-    x = shape_coords[:, 0]
-    y = shape_coords[:, 1]
-
-    x_min = np.min(x)
-    x_max = np.max(x)
-
-    bins = np.linspace(
-        x_min,
-        x_max,
-        n_bins + 1,
-    )
-
-    indices = np.digitize(
-        x,
-        bins,
-    )
-
-    # --------------------------------------------------
-    # BINNING
-    # --------------------------------------------------
-
-    x_raw = []
-    y_raw = []
-
-    for i in range(
-        1,
-        len(bins),
-    ):
-
-        mask = indices == i
-
+def upper_edge_points(shape_coords, n_bins=50, max_jump=2.0):
+    """Return the highest polygon point per x-bin with jump filtering."""
+    if shape_coords is None or len(shape_coords) < 3:
+        return None, None
+    coordinates = np.asarray(shape_coords, dtype=float)
+    x_values, y_values = coordinates[:, 0], coordinates[:, 1]
+    bins = np.linspace(x_values.min(), x_values.max(), n_bins + 1)
+    indices = np.clip(np.digitize(x_values, bins), 1, n_bins)
+    raw = []
+    for bin_index in range(1, len(bins)):
+        mask = indices == bin_index
         if np.any(mask):
+            local = np.flatnonzero(mask)
+            point_index = local[np.argmax(y_values[mask])]
+            raw.append((x_values[point_index], y_values[point_index]))
+    if not raw:
+        return None, None
+    filtered = [raw[0]]
+    for point in raw[1:]:
+        if abs(point[1] - filtered[-1][1]) <= max_jump:
+            filtered.append(point)
+    values = np.asarray(filtered)
+    return values[:, 0], values[:, 1]
 
-            y_max = np.max(
-                y[mask]
-            )
 
-            y_raw.append(
-                y_max
-            )
-
-            x_raw.append(
-                x[mask][
-                    np.argmax(y[mask])
-                ]
-            )
-
-    if not x_raw:
-        return
-
-    # --------------------------------------------------
-    # FILTER
-    # --------------------------------------------------
-
-    x_out = [x_raw[0]]
-    y_out = [y_raw[0]]
-
-    for i in range(
-        1,
-        len(x_raw),
-    ):
-
-        if abs(
-            y_raw[i] - y_out[-1]
-        ) <= 2.0:
-
-            x_out.append(
-                x_raw[i]
-            )
-
-            y_out.append(
-                y_raw[i]
-            )
-
-    # --------------------------------------------------
-    # DATAFRAME
-    # --------------------------------------------------
-
-    df_out = pd.DataFrame(
-        {
-            "x": x_out,
-            "z_max": y_out,
-        }
-    )
-
-    # --------------------------------------------------
-    # SAVE
-    # --------------------------------------------------
-
-    out_path = os.path.join(
-        output_dir,
-        "alphashape_last_timestep.csv",
-    )
-
-    df_out.to_csv(
-        out_path,
-        index=False,
-        header=False,
-    )
-
-    print(
-        f"Extracted upper edge points: "
-        f"{len(x_out)} (n_bins={n_bins})"
-    )
-
-    print(
-        f"Saved upper edge (z0=2.5) to: "
-        f"{out_path}"
-    )
+def extract_upper_edge(shape_coords, n_bins=50, output_dir=None):
+    """Extract and save the canonical upper-edge profile."""
+    if output_dir is None:
+        raise ValueError("output_dir must be provided to extract_upper_edge().")
+    x_values, y_values = upper_edge_points(shape_coords, n_bins=n_bins)
+    if x_values is None:
+        return None
+    output_dir = os.path.abspath(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+    frame = pd.DataFrame({"x": x_values, "z_max": y_values})
+    out_path = os.path.join(output_dir, "alphashape_last_timestep.csv")
+    frame.to_csv(out_path, index=False)
+    print(f"Saved {len(frame)} upper-edge points to: {out_path}")
+    return frame

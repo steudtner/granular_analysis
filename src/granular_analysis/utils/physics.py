@@ -1,33 +1,102 @@
 """Physical constants and input-file parsers for granular simulations."""
 
 import re
-from pathlib import Path
-
 import numpy as np
+
+
+_FLOAT_RE = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eEdD][-+]?\d+)?")
+
+
+def _last_float(line):
+    values = _FLOAT_RE.findall(line)
+    if not values:
+        raise ValueError(f"No numeric value found in line: {line.rstrip()}")
+    return float(values[-1].replace("D", "E").replace("d", "e"))
 
 
 def read_gravity(input_global_path):
     """Read gravity vector magnitude from input.dat-style file."""
+    return float(np.linalg.norm(read_gravity_vector(input_global_path)))
+
+
+def read_gravity_vector(input_global_path):
+    """Read signed gravity components in simulation coordinates."""
     grx = gry = grz = None
     with open(input_global_path, "r") as f:
         for line in f:
+            line = line.split("!", 1)[0]
             if "grx" in line:
-                grx = float(re.findall(r"[-+]?\d*\.\d+|\d+", line)[0])
+                grx = _last_float(line)
             elif "gry" in line:
-                gry = float(re.findall(r"[-+]?\d*\.\d+|\d+", line)[0])
+                gry = _last_float(line)
             elif "grz" in line:
-                grz = float(re.findall(r"[-+]?\d*\.\d+|\d+", line)[0])
+                grz = _last_float(line)
     if grx is None or gry is None or grz is None:
         raise RuntimeError("Could not read gravity (grx/gry/grz) from input file")
-    return np.sqrt(grx**2 + gry**2 + grz**2)
+    return np.array([grx, gry, grz], dtype=float)
+
+
+def initial_potential_energy(input_global_path, input_ellipsoid_path, skip_first=0):
+    """Sum m*|g|*y after skipping input rows, with zero potential at y=0.
+
+    Uses initial input positions, not restart/monitor positions. No buoyancy
+    subtraction and no removal of the final bed's residual potential energy.
+    """
+    import csv
+    if skip_first < 0:
+        raise ValueError("skip_first must be nonnegative")
+    gravity = read_gravity(input_global_path)
+    energies = []
+    row = 0
+    with open(input_ellipsoid_path) as stream:
+        for parts in csv.reader(stream):
+            try:
+                int(parts[0])
+                values = [float(v.replace("D", "E").replace("d", "e")) for v in parts[1:5]]
+            except (ValueError, IndexError):
+                continue
+            row += 1
+            if row <= skip_first:
+                continue
+            if len(parts) < 8:
+                raise ValueError("Initial particle positions (columns 6-8) missing")
+            rho, a, b, c = values
+            position = np.array([float(v.replace("D", "E").replace("d", "e")) for v in parts[5:8]])
+            if not np.isfinite([rho, a, b, c, *position]).all() or min(rho, a, b, c) <= 0:
+                raise ValueError("Invalid initial particle geometry/density/position")
+            energies.append(rho * (4/3)*np.pi*a*b*c * gravity * position[1])
+    if not energies or not np.isfinite(gravity).all():
+        raise ValueError("Cannot determine initial potential energy")
+    return float(np.sum(energies))
+
+
+def read_fluid_density(input_global_path):
+    """Read rho_f (water/fluid density) from the simulation input."""
+    with open(input_global_path) as stream:
+        for line in stream:
+            line = line.split("!", 1)[0]
+            match = re.match(r"\s*rho_f\s*=\s*(" + _FLOAT_RE.pattern + r")", line, re.I)
+            if match:
+                density = float(match.group(1).replace("D", "E").replace("d", "e"))
+                if not np.isfinite(density) or density <= 0:
+                    raise ValueError("Fluid density rho_f must be finite and positive.")
+                return density
+    raise ValueError(f"Missing fluid density rho_f in {input_global_path}")
 
 
 def read_density_first_particle(input_ellipsoid_path):
-    """Read density from the first line of input_ellipsoid_data.dat."""
-    with open(input_ellipsoid_path, "r") as f:
-        line = f.readline()
-    parts = line.strip().split(",")
-    return float(parts[1])
+    """Read density from the first valid particle row, allowing headers."""
+    with open(input_ellipsoid_path, "r") as stream:
+        for line in stream:
+            parts = [part.strip() for part in line.split(",")]
+            if len(parts) < 2:
+                continue
+            try:
+                int(parts[0])
+                return float(parts[1])
+            except ValueError:
+                continue
+    raise RuntimeError(f"No valid particle density found in {input_ellipsoid_path}")
 
 
 def load_mass_array(input_ellipsoid_path):

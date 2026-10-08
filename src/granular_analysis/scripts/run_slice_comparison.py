@@ -1,7 +1,14 @@
+
+from granular_analysis.plotting import plotstyle
 import os
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+
+from granular_analysis.paths import CasePaths
+from granular_analysis.geometry.alpha_logging import summarize_alpha_warnings
 
 from granular_analysis.config import (
     RESULTS_DIR,
@@ -12,75 +19,69 @@ from granular_analysis.config import (
     USE_PARTICLE_SKIP,
     SKIP_FIRST_PARTICLES,
 )
-from granular_analysis.io.loader import (
-    load_last_frame,
-    filter_particles,
-)
+from granular_analysis.io.loader import load_frame, load_last_frame
 from granular_analysis.analysis.porosity2d import (
     compute_slice_porosity,
 )
-from granular_analysis.utils.state_manager import load_state, save_state
+from granular_analysis.utils.state_manager import build_fingerprint, load_state, save_state
 
 
 # --------------------------------------------------
 # DATA LOADING
 # --------------------------------------------------
 
-def load_particles(data_folder):
-    ellipsoids = load_last_frame(data_folder)
-
-    return filter_particles(
-        ellipsoids,
-        USE_PARTICLE_SKIP,
-        SKIP_FIRST_PARTICLES,
-    )
+def load_particles(data_folder, counter=None):
+    """Load the selected TRN frame without applying hidden filtering."""
+    if counter is None:
+        return load_last_frame(data_folder)
+    return load_frame(data_folder, f"ell_trn_{int(counter):06d}.bin")
 
 
 # --------------------------------------------------
 # 2D DATA
 # --------------------------------------------------
 
+@summarize_alpha_warnings()
 def compute_2d_slice_summary(
     particles,
     z_levels,
     output_dir=None,
+    *,
+    alpha=ALPHA_2D,
+    lz=LZ,
+    skip_first=0,
+    densify=None,
+    upper_edge_bins=50,
 ):
     records = []
-
     for z in z_levels:
-
         result = compute_slice_porosity(
             particles,
             z,
-            ALPHA_2D,
-            LZ,
+            alpha,
+            lz,
+            densify_max_segment_length=densify,
+            n_bins=upper_edge_bins,
+            skip_first=skip_first,
             output_dir=output_dir,
+            write_upper_edge=False,
         )
-
         if result is None:
-
-            records.append(
-                {
-                    "z": z,
-                    "A_ell": np.nan,
-                    "A_alpha": np.nan,
-                    "porosity": np.nan,
-                    "n": 0,
-                }
-            )
-
-            continue
-
-        records.append(
-            {
+            records.append({
                 "z": z,
-                "A_ell": result["A_ell"],
-                "A_alpha": result["A_alpha"],
-                "porosity": result["porosity"],
-                "n": result["n"],
-            }
-        )
-
+                "A_ell": np.nan,
+                "A_alpha": np.nan,
+                "porosity": np.nan,
+                "n": 0,
+            })
+            continue
+        records.append({
+            "z": z,
+            "A_ell": result["A_ell"],
+            "A_alpha": result["A_alpha"],
+            "porosity": result["porosity"],
+            "n": result["n"],
+        })
     return pd.DataFrame(records)
 
 
@@ -100,7 +101,7 @@ def _plot_profile(
     linewidth=1.5,
 ):
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(plotstyle.figwidth_full, 5))
 
     for col, label, linestyle in zip(
         columns,
@@ -119,7 +120,7 @@ def _plot_profile(
             )
 
     ax.set_xlabel(
-        r"$z / D_{\mathrm{Eq}}$"
+        r"$z\,D_{\mathrm{Eq}}^{-1}$"
     )
 
     ax.set_ylabel(ylabel)
@@ -129,11 +130,13 @@ def _plot_profile(
 
     ax.set_title(title)
     ax.grid(True, alpha=0.3)
-    ax.legend()
+    plotstyle.legend_above(ax)
+
+    plotstyle.prepare_figure(fig)
 
     fig.tight_layout()
 
-    fig.savefig(
+    plotstyle.export_figure(fig,
         save_path,
         dpi=200,
     )
@@ -159,7 +162,7 @@ def plot_area_profile(df, save_path):
             "-",
             "-",
         ],
-        linewidth=1.5,
+        linewidth=1.2,
         title="Area Profile",
         ylabel="Area",
         save_path=save_path,
@@ -179,7 +182,7 @@ def plot_porosity_profile(df, save_path):
         linestyles=[
             "-",
         ],
-        linewidth=1.5,
+        linewidth=1.2,
         title="Porosity Profile",
         ylabel=r"$\Phi$",
         save_path=save_path,
@@ -193,8 +196,6 @@ def plot_porosity_profile(df, save_path):
 
 def print_statistics(df):
 
-    print("\n=== AREA STATISTICS ===")
-
     if "A_alpha" in df.columns:
 
         p = df["A_alpha"].dropna()
@@ -206,8 +207,6 @@ def print_statistics(df):
                 f"std={p.std():.4f}"
             )
 
-    print("\n=== POROSITY STATISTICS ===")
-
     if "porosity" in df.columns:
 
         p = df["porosity"].dropna()
@@ -215,7 +214,7 @@ def print_statistics(df):
         if len(p):
 
             print(
-                f"2D: mean={p.mean():.4f}, "
+                f"Porosity: mean={p.mean():.4f}, "
                 f"std={p.std():.4f}"
             )
 
@@ -224,44 +223,9 @@ def print_statistics(df):
 # --------------------------------------------------
 
 def resolve_data_folder(data_folder):
-    """
-    Resolve the supplied path to the directory containing
-    the ellipsoid TRN binary files.
+    """Resolve and validate the canonical transient-data directory."""
+    return str(CasePaths.from_input(data_folder).require_trn())
 
-    Accepted input forms:
-
-        .../results
-        .../results/ellipsoid
-        .../results/ellipsoid/ellipsoid_trn
-        .../ellipsoid_trn
-    """
-
-    data_folder = os.path.abspath(os.path.expanduser(data_folder))
-
-    candidates = [
-        data_folder,
-        os.path.join(data_folder, "ellipsoid_trn"),
-        os.path.join(data_folder, "ellipsoid", "ellipsoid_trn"),
-        os.path.join(data_folder, "ellipsoid"),
-    ]
-
-    for candidate in candidates:
-        if not os.path.isdir(candidate):
-            continue
-
-        try:
-            files = os.listdir(candidate)
-        except OSError:
-            continue
-
-        if any(f.endswith(".bin") for f in files):
-            return candidate
-
-    raise FileNotFoundError(
-        "Could not find ellipsoid TRN .bin files.\n"
-        f"Checked candidates:\n"
-        + "\n".join(f"  {c}" for c in candidates)
-    )
 # --------------------------------------------------
 # MAIN
 # --------------------------------------------------
@@ -271,6 +235,12 @@ def main(
     path: str = None,
     out: str = None,
     z_value: float = None,
+    *,
+    alpha: float = ALPHA_2D,
+    skip_first: int = None,
+    densify: float = None,
+    upper_edge_bins: int = 50,
+    counter: int = None,
 ):
 
     # --------------------------------------------------
@@ -324,41 +294,36 @@ def main(
 
         z_levels = Z_LEVELS
 
-    print("=" * 60)
-    print("2D Slice Analysis")
-    print("=" * 60)
-
-    print(
-        f"DATA   = {data_folder}"
-    )
-
-    print(
-        f"OUTPUT = {outdir}"
-    )
-
-    if z_value is not None:
-
-        print(
-            f"Z      = {z_value}"
-        )
-
-    else:
-
-        print(
-            f"Z LEVELS = {len(z_levels)}"
-        )
+    print(f"2D slices: {len(z_levels)} level(s), alpha={alpha:g}")
 
     # --------------------------------------------------
     # CACHE
     # --------------------------------------------------
 
-    cached = (
-        None
-        if force
-        else load_state(
-            "slices",
-            results_dir,
-        )
+    effective_skip = (
+        skip_first
+        if skip_first is not None
+        else SKIP_FIRST_PARTICLES if USE_PARTICLE_SKIP else 0
+    )
+    frame = (
+        Path(data_folder) / f"ell_trn_{int(counter):06d}.bin"
+        if counter is not None
+        else max(Path(data_folder).glob("ell_trn_*.bin"))
+    )
+    frame_stat = frame.stat()
+    cache_fingerprint = build_fingerprint(
+        frame=str(frame.resolve()),
+        frame_size=frame_stat.st_size,
+        frame_mtime_ns=frame_stat.st_mtime_ns,
+        z_levels=[float(value) for value in z_levels],
+        alpha=alpha,
+        lz=LZ,
+        skip_first=effective_skip,
+        densify=densify,
+        upper_edge_bins=upper_edge_bins,
+    )
+    cached = None if force else load_state(
+        "slices", results_dir, fingerprint=cache_fingerprint
     )
 
     csv_path = os.path.join(
@@ -371,17 +336,7 @@ def main(
         and os.path.exists(csv_path)
     ):
 
-        print(
-            "\n2D Slice Analysis (cached)"
-        )
-
-        for k, v in cached.items():
-
-            if k != "timestamp":
-
-                print(
-                    f"  {k} = {v}"
-                )
+        print("Using cached slice results.")
 
         df = pd.read_csv(
             csv_path
@@ -393,31 +348,22 @@ def main(
         # LOAD PARTICLES
         # --------------------------------------------------
 
-        print(
-            "\nLoading particles..."
-        )
-
-        particles = load_particles(
-            data_folder
-        )
-
-        print(
-            f"Loaded particles: "
-            f"{len(particles)}"
-        )
+        particles = load_particles(data_folder, counter=counter)
 
         # --------------------------------------------------
         # COMPUTE
         # --------------------------------------------------
 
-        print(
-            "\nComputing slices..."
-        )
+        print(f"Computing slices for {len(particles)} particles...")
 
         df = compute_2d_slice_summary(
             particles,
             z_levels,
             output_dir=outdir,
+            alpha=alpha,
+            skip_first=effective_skip,
+            densify=densify,
+            upper_edge_bins=upper_edge_bins,
         )
 
         # --------------------------------------------------
@@ -454,6 +400,7 @@ def main(
             "slices",
             stats,
             results_dir,
+            fingerprint=cache_fingerprint,
         )
 
     # --------------------------------------------------
@@ -470,10 +417,6 @@ def main(
         "porosity_profile.png",
     )
 
-    print(
-        "\nCreating plots..."
-    )
-
     plot_area_profile(
         df,
         area_png,
@@ -486,11 +429,7 @@ def main(
 
     print_statistics(df)
 
-    print("\nSaved:")
-
-    print(csv_path)
-    print(area_png)
-    print(porosity_png)
+    print(f"Saved slice summary and profiles to: {outdir}")
 
 
 if __name__ == "__main__":

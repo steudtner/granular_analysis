@@ -30,63 +30,33 @@ Verifiziert gegen analytische Testfälle (Kugeln, Ellipsoide Spitze-an-Spitze
 und Seite-an-Seite): exakte Übereinstimmung.
 """
 
+from granular_analysis.plotting import plotstyle
+
 import os
-import sys
 import argparse
 import numpy as np
 from scipy.optimize import minimize_scalar
 
 from granular_analysis.config import FOLDER, SKIP_FIRST_PARTICLES, USE_PARTICLE_SKIP
+from granular_analysis.paths import CasePaths, collision_rk_stages
 
 
 def _resolve_data_root(path):
-    candidates = []
-    if path:
-        candidates.append(path)
-    if FOLDER:
-        candidates.append(FOLDER)
-    if os.getcwd():
-        candidates.append(os.getcwd())
+    """Return the ellipsoid root expected by ``load_data``."""
+    return str(CasePaths.from_input(path or FOLDER).ellipsoid)
 
-    for candidate in candidates:
-        candidate = os.path.abspath(candidate)
-        if os.path.isdir(os.path.join(candidate, "ellipsoid_trn")):
-            return candidate
-        if os.path.isdir(os.path.join(candidate, "ellipsoid")):
-            return os.path.join(candidate, "ellipsoid")
-        if os.path.isdir(os.path.join(candidate, "results", "ellipsoid", "ellipsoid_trn")):
-            return os.path.join(candidate, "results", "ellipsoid", "ellipsoid_trn")
-        if os.path.isdir(os.path.join(candidate, "results", "ellipsoid")):
-            return os.path.join(candidate, "results", "ellipsoid")
-        if os.path.basename(candidate) == "ellipsoid_trn":
-            return os.path.dirname(candidate)
-        if os.path.basename(candidate) == "ellipsoid":
-            return candidate
 
-    return os.path.abspath(path or FOLDER or os.getcwd())
-
-# -------------------------------------------------------------------------
-#  Import load_data
-# -------------------------------------------------------------------------
-try:
-    from granular_analysis.io.read_ellipsoid_data import load_data
-except Exception:
-    here = os.path.abspath(os.path.dirname(__file__))
-    for p in [
-        here, os.path.join(here, ".."),
-        os.path.join(here, "../results"), os.getcwd()
-    ]:
-        p = os.path.abspath(p)
-        if os.path.isfile(os.path.join(p, "read_ellipsoid_data.py")):
-            sys.path.insert(0, p)
-    from granular_analysis.io.read_ellipsoid_data import load_data
+from granular_analysis.io.read_ellipsoid_data import load_data
 
 # -------------------------------------------------------------------------
 # Quaternion -> Rotation Matrix
 # -------------------------------------------------------------------------
 def quat_to_rot_matrix(q):
     q = np.asarray(q, float)
-    w, x, y, z = q
+    norm = np.linalg.norm(q)
+    if q.shape != (4,) or not np.isfinite(norm) or norm == 0:
+        raise ValueError("Quaternion must contain four finite non-zero values")
+    w, x, y, z = q / norm
     R = np.array([
         [1-2*(y*y+z*z), 2*(x*y-z*w),   2*(x*z+y*w)],
         [2*(x*y+z*w),   1-2*(x*x+z*z), 2*(y*z-x*w)],
@@ -142,6 +112,8 @@ def perram_wertheim_distance(r_a, A, r_b, B):
                            options={'xatol': 1e-10})
     s = -res.fun
     dist = np.linalg.norm(r_ab)
+    if not np.isfinite(s) or s <= 0:
+        raise ValueError("Degenerate Perram-Wertheim contact function")
     d_pw = dist * (1.0 - 1.0 / np.sqrt(s))
     return s, d_pw
 
@@ -179,13 +151,14 @@ def combine_rk_coll(rkdata):
 # =========================================================================
 # MAIN
 # =========================================================================
-def main(counter=None, path=None, out=None, dry=False):
+def main(counter=None, path=None, out=None, dry=None):
     if counter is None and path is None and out is None and not dry:
         parser = argparse.ArgumentParser(description="Compute collision surface distances")
         parser.add_argument("--counter", type=int, required=True)
         parser.add_argument("--path", required=False, default=None)
         parser.add_argument("--out", required=False, default=None)
-        parser.add_argument("--dry", action="store_true")
+        parser.add_argument("--dry", action="store_true", default=None,
+                            help="Use stage 1 only (default: detect collision layout)")
         args = parser.parse_args()
         counter = args.counter
         path = args.path
@@ -194,6 +167,10 @@ def main(counter=None, path=None, out=None, dry=False):
 
     counter = int(counter) if counter is not None else None
     path = _resolve_data_root(path or FOLDER)
+    if dry is None:
+        dry = collision_rk_stages(CasePaths.from_input(path)) == (1,)
+        if dry:
+            print("Detected single-stage COLL output; loading stage 1 only.")
     out_dir = out if out else os.getcwd()
     os.makedirs(out_dir, exist_ok=True)
 
@@ -368,7 +345,7 @@ def main(counter=None, path=None, out=None, dry=False):
         plt.ylabel("count")
         plt.title(f"surface distances frame {counter}")
         png = os.path.join(out_dir, f"coll_surface_hist_{counter:06d}.png")
-        fig.savefig(png, dpi=180, bbox_inches="tight")
+        plotstyle.export_figure(fig, png, dpi=180, bbox_inches="tight")
         plt.close()
         print(f"→ wrote histogram:\n   {png}")
 

@@ -6,6 +6,16 @@ from typing import Any, List, Sequence, Union
 from granular_analysis.io.read_ellipsoid_data import read_ellipsoid_trn
 
 
+def _trn_files(folder: Path) -> List[Path]:
+    """Return exact TRN frame files sorted by numeric counter."""
+    files = []
+    for path in folder.glob("ell_trn_*.bin"):
+        suffix = path.stem.removeprefix("ell_trn_")
+        if suffix.isdigit():
+            files.append((int(suffix), path))
+    return [path for _, path in sorted(files)]
+
+
 def load_last_frame(folder: Union[str, Path]) -> Any:
     """Load the last *.bin frame from *folder*, sorted alphabetically.
     
@@ -23,7 +33,7 @@ def load_last_frame(folder: Union[str, Path]) -> Any:
     if not folder.is_dir():
         raise NotADirectoryError(f"Not a directory: {folder.resolve()}")
 
-    files = sorted(folder.glob("*.bin"))
+    files = _trn_files(folder)
     if not files:
         raise FileNotFoundError(
             f"No .bin files found in: {folder.resolve()}"
@@ -41,7 +51,7 @@ def get_all_bin_files(folder: Union[str, Path]) -> List[str]:
     if not folder.is_dir():
         raise NotADirectoryError(f"Not a directory: {folder.resolve()}")
 
-    files = sorted(p.name for p in folder.glob("*.bin"))
+    files = [p.name for p in _trn_files(folder)]
     if not files:
         raise FileNotFoundError(
             f"No .bin files found in: {folder.resolve()}"
@@ -55,7 +65,7 @@ def get_all_bin_paths(folder: Union[str, Path]) -> List[Path]:
     if not folder.is_dir():
         raise NotADirectoryError(f"Not a directory: {folder.resolve()}")
 
-    files = sorted(folder.glob("*.bin"))
+    files = _trn_files(folder)
     if not files:
         raise FileNotFoundError(
             f"No .bin files found in: {folder.resolve()}"
@@ -76,7 +86,7 @@ def load_frame(folder: Union[str, Path], frame: Union[None, int, str] = None) ->
     if not folder.is_dir():
         raise NotADirectoryError(f"Not a directory: {folder.resolve()}")
 
-    files = sorted(folder.glob("*.bin"))
+    files = _trn_files(folder)
     if not files:
         raise FileNotFoundError(f"No .bin files found in: {folder.resolve()}")
 
@@ -131,7 +141,7 @@ def load_frame_by_time(folder: Union[str, Path], time_value: float, mode: str = 
     if not folder.is_dir():
         raise NotADirectoryError(f"Not a directory: {folder.resolve()}")
 
-    files = sorted(folder.glob("*.bin"))
+    files = _trn_files(folder)
     if not files:
         raise FileNotFoundError(f"No .bin files found in: {folder.resolve()}")
 

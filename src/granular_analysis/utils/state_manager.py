@@ -1,5 +1,5 @@
+import hashlib
 import json
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -42,8 +42,10 @@ class StateManager:
 
         # Write back
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.state_file, "w") as f:
+        temporary = self.state_file.with_suffix(".json.tmp")
+        with open(temporary, "w") as f:
             json.dump(state, f, indent=2)
+        temporary.replace(self.state_file)
 
     def clear(self, pipeline: Optional[str] = None) -> None:
         """Remove cached results. If pipeline is None, clear all."""
@@ -66,12 +68,35 @@ class StateManager:
         return self.read(pipeline) is not None
 
 
-def load_state(pipeline: str, results_dir: str) -> Optional[Dict[str, Any]]:
-    return StateManager(results_dir).read(pipeline)
+def build_fingerprint(**values: Any) -> str:
+    """Return a stable cache key for input paths and analysis parameters."""
+    payload = json.dumps(values, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
-def save_state(pipeline: str, data: Dict[str, Any], results_dir: str) -> None:
-    StateManager(results_dir).write(pipeline, data)
+def load_state(
+    pipeline: str,
+    results_dir: str,
+    fingerprint: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    state = StateManager(results_dir).read(pipeline)
+    if state is None:
+        return None
+    if fingerprint is not None and state.get("fingerprint") != fingerprint:
+        return None
+    return state
+
+
+def save_state(
+    pipeline: str,
+    data: Dict[str, Any],
+    results_dir: str,
+    fingerprint: Optional[str] = None,
+) -> None:
+    payload = dict(data)
+    if fingerprint is not None:
+        payload["fingerprint"] = fingerprint
+    StateManager(results_dir).write(pipeline, payload)
 
 
 def has_state(pipeline: str, results_dir: str) -> bool:

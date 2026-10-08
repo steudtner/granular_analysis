@@ -1,5 +1,10 @@
 import os
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
+
+from granular_analysis.paths import CasePaths
 
 from granular_analysis.config import (
     FOLDER,
@@ -11,48 +16,35 @@ from granular_analysis.config import (
     SKIP_FIRST_PARTICLES,
 )
 
-from granular_analysis.io.loader import load_last_frame
+from granular_analysis.io.loader import load_frame, get_all_bin_paths
 from granular_analysis.analysis.porosity2d import compute_slice_porosity
-from granular_analysis.utils.state_manager import load_state, save_state
+from granular_analysis.utils.state_manager import build_fingerprint, load_state, save_state
+
+
+def write_surface_summary(result, outdir, frame, z_value, *,
+                          initial_result=None, initial_frame=None):
+    """Persist and print the surface dimensions alongside the upper-edge CSV."""
+    keys = ("x_min", "x_max", "max_runout_length", "remaining_height")
+    summary = {"frame": frame.name, "z_slice": z_value,
+               **{key: result[key] for key in keys}}
+    target = Path(outdir) / "surface_metrics.csv"
+    rows = []
+    if initial_frame is not None:
+        rows.append({"state": "initial", "frame": initial_frame.name,
+                     "z_slice": z_value,
+                     **{key: initial_result[key] if initial_result is not None else None
+                        for key in keys}})
+    rows.append({"state": "selected", **summary})
+    pd.DataFrame(rows).to_csv(target, index=False)
+    print(f"  Böschungskante: {Path(outdir) / 'alphashape_last_timestep.csv'}")
+    print(f"  Maximale Auslauflänge (x_max - x_min): {summary['max_runout_length']}")
+    print(f"  Verbleibende Resthöhe (über y=0): {summary['remaining_height']}")
+    print(f"  Oberflächenkennwerte: {target}")
 
 
 def resolve_data_folder(data_folder):
-    """
-    Resolve a dataset path to the directory containing ellipsoid_trn
-    binary files.
-
-    Accepted input paths include:
-        .../results
-        .../results/ellipsoid
-        .../results/ellipsoid/ellipsoid_trn
-        .../ellipsoid_trn
-    """
-
-    data_folder = os.path.abspath(data_folder)
-
-    candidates = [
-        data_folder,
-        os.path.join(data_folder, "ellipsoid_trn"),
-        os.path.join(data_folder, "ellipsoid", "ellipsoid_trn"),
-        os.path.join(data_folder, "ellipsoid"),
-    ]
-
-    for candidate in candidates:
-        if not os.path.isdir(candidate):
-            continue
-
-        try:
-            files = os.listdir(candidate)
-        except OSError:
-            continue
-
-        if any(filename.endswith(".bin") for filename in files):
-            return candidate
-
-    raise FileNotFoundError(
-        "Could not resolve ellipsoid_trn data directory from:\n"
-        f"  {data_folder}"
-    )
+    """Resolve and validate the canonical transient-data directory."""
+    return str(CasePaths.from_input(data_folder).require_trn())
 
 
 def main(
@@ -62,6 +54,9 @@ def main(
     z_value: float = LZ / 2,
     densify: float = None,
     upper_edge_bins: int = 50,
+    alpha: float = ALPHA_2D,
+    lz: float = LZ,
+    counter: int = None,
 ):
     """
     Run the 2D slice/porosity analysis.
@@ -132,7 +127,44 @@ def main(
     # Check cache
     # ------------------------------------------------------------
 
-    cached = None if force else load_state("2d", results_dir)
+    initial_frame = get_all_bin_paths(data_folder)[0]
+    frame = (Path(data_folder) / f"ell_trn_{counter:06d}.bin" if counter is not None
+             else max(Path(data_folder).glob("ell_trn_*.bin")))
+    frame_stat = frame.stat()
+    cache_fingerprint = build_fingerprint(
+        frame=str(frame.resolve()),
+        frame_size=frame_stat.st_size,
+        frame_mtime_ns=frame_stat.st_mtime_ns,
+        z_value=z_value,
+        alpha=alpha,
+        lz=lz,
+        skip_first=SKIP_FIRST_PARTICLES if USE_PARTICLE_SKIP else 0,
+        densify=densify,
+        upper_edge_bins=upper_edge_bins,
+        initial_frame=str(initial_frame.resolve()),
+        initial_frame_size=initial_frame.stat().st_size,
+        initial_frame_mtime_ns=initial_frame.stat().st_mtime_ns,
+        surface_metrics_version=2,
+    )
+    cached = None if force else load_state(
+        "2d", results_dir, fingerprint=cache_fingerprint
+    )
+
+    def export_surface_summary(result):
+        initial_result = result if initial_frame == frame else compute_slice_porosity(
+            load_frame(data_folder, initial_frame.name),
+            z0=z_value,
+            alpha=alpha,
+            lz=lz,
+            densify_max_segment_length=densify,
+            n_bins=upper_edge_bins,
+            skip_first=SKIP_FIRST_PARTICLES if USE_PARTICLE_SKIP else 0,
+            write_upper_edge=False,
+        )
+        write_surface_summary(
+            result, outdir, frame, z_value,
+            initial_result=initial_result, initial_frame=initial_frame,
+        )
 
     if cached:
         print()
@@ -148,13 +180,13 @@ def main(
             "(cached calculation)..."
         )
 
-        ellipsoids = load_last_frame(data_folder)
+        ellipsoids = load_frame(data_folder, frame.name)
 
-        compute_slice_porosity(
+        result = compute_slice_porosity(
             ellipsoids,
             z0=z_value,
-            alpha=ALPHA_2D,
-            lz=LZ,
+            alpha=alpha,
+            lz=lz,
             densify_max_segment_length=densify,
             n_bins=upper_edge_bins,
             skip_first=(
@@ -163,7 +195,10 @@ def main(
                 else 0
             ),
             output_dir=outdir,
+            write_upper_edge=True,
         )
+        if result is not None:
+            export_surface_summary(result)
 
         return
 
@@ -172,9 +207,9 @@ def main(
     # ------------------------------------------------------------
 
     print()
-    print("Loading last ellipsoid frame...")
+    print(f"Loading ellipsoid frame {frame.name}...")
 
-    ellipsoids = load_last_frame(data_folder)
+    ellipsoids = load_frame(data_folder, frame.name)
 
     particles = ellipsoids
 
@@ -193,8 +228,8 @@ def main(
     result = compute_slice_porosity(
         particles,
         z0=z_value,
-        alpha=ALPHA_2D,
-        lz=LZ,
+        alpha=alpha,
+        lz=lz,
         densify_max_segment_length=densify,
         n_bins=upper_edge_bins,
         skip_first=(
@@ -203,33 +238,12 @@ def main(
             else 0
         ),
         output_dir=outdir,
+        write_upper_edge=True,
     )
 
     if result is None:
         print("No valid slice computed.")
         return
-
-    # ------------------------------------------------------------
-    # Upper-edge extraction at requested z
-    # ------------------------------------------------------------
-
-    print()
-    print(f"Extracting upper edge at z0={z_value} ...")
-
-    compute_slice_porosity(
-        particles,
-        z0=z_value,
-        alpha=ALPHA_2D,
-        lz=LZ,
-        densify_max_segment_length=densify,
-        n_bins=upper_edge_bins,
-        skip_first=(
-            SKIP_FIRST_PARTICLES
-            if USE_PARTICLE_SKIP
-            else 0
-        ),
-        output_dir=outdir,
-    )
 
     # ------------------------------------------------------------
     # Convert numpy values to Python-native types
@@ -259,6 +273,7 @@ def main(
     print(f"  A_ell    = {result['A_ell']}")
     print(f"  A_alpha  = {result['A_alpha']}")
     print(f"  n        = {result['n']}")
+    export_surface_summary(result)
 
     # ------------------------------------------------------------
     # Save cache in the writable output directory
@@ -268,6 +283,7 @@ def main(
         "2d",
         result_serializable,
         results_dir,
+        fingerprint=cache_fingerprint,
     )
 
     print()

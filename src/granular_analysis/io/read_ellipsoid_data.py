@@ -8,6 +8,8 @@ __maintainer__ = "Ricardo Rebel"
 __email__ = "ricardo.rebel@tu-dresden.de"
 __status__ = "Production"
 
+from pathlib import Path
+
 
 def cli():
 
@@ -54,38 +56,32 @@ def cli():
     return None
 
 
-def load_data(**kwargs):
-    import os
-    import sys
+def load_data(*, data, counter, path, dry=False):
+    """Load one TRN frame or the required Runge-Kutta FRC/COLL files."""
+    if data not in {"trn", "frc", "coll"}:
+        raise ValueError("data must be one of: trn, frc, coll")
+    if counter is None:
+        raise ValueError("counter must be provided")
 
-    fname = f"{kwargs['path']}/ellipsoid_{kwargs['data']}/ell_{kwargs['data']}_{kwargs['counter']:06d}.bin"
-    fname_rk1 = f"{kwargs['path']}/ellipsoid_{kwargs['data']}/ell_{kwargs['data']}_{kwargs['counter']:06d}_1.bin"
-    fname_rk2 = f"{kwargs['path']}/ellipsoid_{kwargs['data']}/ell_{kwargs['data']}_{kwargs['counter']:06d}_2.bin"
-    fname_rk3 = f"{kwargs['path']}/ellipsoid_{kwargs['data']}/ell_{kwargs['data']}_{kwargs['counter']:06d}_3.bin"
+    root = Path(path).expanduser()
+    directory = root / f"ellipsoid_{data}"
+    base = f"ell_{data}_{int(counter):06d}"
+    if data == "trn":
+        filename = directory / f"{base}.bin"
+        if not filename.is_file():
+            raise FileNotFoundError(filename)
+        return read_ellipsoid_trn(str(filename))
 
-    if kwargs['data'] == "trn":
-        ellipsoid_data = read_ellipsoid_trn(fname)
-    elif kwargs['data'] == "frc":
-        rk_files = [fname_rk1] if kwargs.get('dry', False) else [fname_rk1, fname_rk2, fname_rk3]
-        available = [f for f in rk_files if os.path.isfile(f)]
-        if not available:
-            raise FileNotFoundError(f"No RK files found for frame {kwargs['counter']} in {kwargs['path']}")
-
-        loaded = [read_ellipsoid_frc(f) for f in available]
-        ellipsoid_data = loaded[0] if len(loaded) == 1 else tuple(loaded)
-    elif kwargs['data'] == "coll":
-        rk_files = [fname_rk1] if kwargs.get('dry', False) else [fname_rk1, fname_rk2, fname_rk3]
-        available = [f for f in rk_files if os.path.isfile(f)]
-        if not available:
-            raise FileNotFoundError(f"No RK files found for frame {kwargs['counter']} in {kwargs['path']}")
-
-        loaded = [read_ellipsoid_coll(f) for f in available]
-        ellipsoid_data = loaded[0] if len(loaded) == 1 else tuple(loaded)
-    else:
-        print("\n 'data' must be in ['trn', 'frc', 'coll']")
-        sys.exit(1)
-
-    return ellipsoid_data
+    stages = (1,) if dry else (1, 2, 3)
+    filenames = [directory / f"{base}_{stage}.bin" for stage in stages]
+    missing = [filename for filename in filenames if not filename.is_file()]
+    if missing:
+        raise FileNotFoundError(
+            "Missing required RK files: " + ", ".join(map(str, missing))
+        )
+    reader = read_ellipsoid_frc if data == "frc" else read_ellipsoid_coll
+    loaded = [reader(str(filename)) for filename in filenames]
+    return loaded[0] if dry else tuple(loaded)
 
 
 def print_progress(n, N_tot, data_type, bar_length=40):

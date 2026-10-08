@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from granular_analysis.geometry.alpha2d import compute_alpha_shape_2d
 
 
@@ -28,7 +29,8 @@ def test_too_few_points():
 def test_rectangle():
     """With a very large alpha, result should be close to the convex hull (area ~ 1)."""
     pts = np.array([[0, 0], [1, 0], [1, 1], [0, 1]])
-    coords, area = compute_alpha_shape_2d(pts, alpha=1000)
+    with pytest.warns(RuntimeWarning, match="using the convex hull"):
+        coords, area = compute_alpha_shape_2d(pts, alpha=1000)
     assert area > 0.9
 
 

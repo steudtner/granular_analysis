@@ -1,46 +1,33 @@
-# Refactor-Protokoll — granular_analysis
+# Refactor status
 
-Datum: 2026-06-03
+## Supported workflows
 
-## Durchgeführte Änderungen
+- 2D porosity and upper-edge extraction
+- z-slice profiles and exact ellipsoid slice plots
+- monitor-based kinetic-energy analysis
+- segmented-regression slope analysis through R
+- collision-distance analysis
+- 3D ellipsoid particle rendering (`renderview`)
 
-### Neu: utils/porosity_utils.py
-- `compute_porosity(V_outer, V_inner)` zentralisiert
-- Vorher dreifach kopiert in `porosity2d.py`, `porosity3d.py`, `slice_depth_analysis.py`
-- Alle drei Stellen importieren jetzt aus `utils.porosity_utils`
+## Architecture
 
-### Neu: utils/logging_utils.py
-- `suppress_noise()` zentralisiert
-- Vorher doppelt in `porosity3d_opentop.py` und `run_3d_opentop.py`
+- `paths.CasePaths` owns simulation-case path resolution.
+- `scripts.run_all` is the supported master CLI and returns a failing exit code
+  when a requested pipeline fails.
+- Analysis caches include input and parameter fingerprints.
+- Slice plotting and porosity analysis share periodic geometry, union-area, and
+  upper-edge rules.
+- PyVista is optional and imported only by the ellipsoid renderer.
 
-### Neu: utils/__init__.py
-- Package hatte kein `__init__.py` — jetzt vorhanden mit re-exports
+## Removed workflows
 
-### geometry/alpha3d_variants.py
-- Dupliziertes `_largest_polygon()` entfernt
-- Importiert jetzt aus `alpha_utils.py`
+The experimental 3D alpha-shape, open-top porosity, PCA-prism, and 3D/2D
+mesh-comparison implementations were removed. They had conflicting algorithms,
+broken imports, and no supported pipeline. This removal does not include the
+3D ellipsoid particle renderer.
 
-### geometry/alpha_utils.py
-- Bereinigte, vollständige Version mit Docstrings
+## Remaining compatibility code
 
-### scripts/run_3d_opentop.py
-- Lokales `suppress_noise()` entfernt, zentrales importiert
-- Überlange Zeilenumbrüche geglättet
-
-### scripts/run_depth_slice_analysis.py
-- Wildcard-Import `from granular_analysis.config import *` → explizite Imports
-
-### scripts/run_energy_analysis.py
-- Wildcard-Import `from granular_analysis.config import *` → explizite Imports
-
-### scripts/run_all.py
-- Lokales `suppress_noise()` entfernt, zentrales importiert
-
-### tests/test_alpha2d.py
-- Defekt: `test_rectangle()` war falsch eingerückt (inside `test_too_few_points()`)
-- Jetzt korrekt als eigenständige Funktion auf Top-Level
-
-### Nicht geändert
-- `alpha3d_open_top.py` vs `alpha3d_opentop_pca.py` — logisch different (open-top Heuristik vs. Prism-Modell); Konsolidierung nur mit fachlichem Input sinnvoll
-- `read_ellipsoid_data.py` — stabiler Legacy-Code, nicht angefasst
-- `ellipseSlices/` Daten — unverändert
+`run_slice_analysis.py`, `run_depth_slice_analysis.py`, `analysis/slicing.py`,
+and `utils/mesh.py` remain for direct users, but are not part of the master
+pipeline. New features should target the supported workflows above.
