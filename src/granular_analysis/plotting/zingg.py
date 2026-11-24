@@ -18,7 +18,7 @@ def plot_zingg(table, output_path, *, color_by="Sf"):
         options.update(c=table[color_by], cmap="viridis", vmin=0, vmax=1)
     points = ax.scatter(table["I_over_L"], table["S_over_I"], **options)
     if color_by in table:
-        label = "Corey Sf = S / sqrt(L·I)" if color_by == "Sf" else "Wadell sphericity"
+        label = "Corey $S_f = S / (L I)^{1/2}$" if color_by == "Sf" else "Wadell sphericity"
         figure.colorbar(points, ax=ax, label=label)
     ax.axvline(2 / 3, color="0.4", linestyle="--", linewidth=1)
     ax.axhline(2 / 3, color="0.4", linestyle="--", linewidth=1)

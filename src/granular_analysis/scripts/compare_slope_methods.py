@@ -47,18 +47,11 @@ def _python_results(data: pd.DataFrame, max_breakpoints: int) -> pd.DataFrame:
 
 def _run_r(csv_path: Path, output_dir: Path, rscript: str | None) -> Path:
     script = Path(__file__).with_name("slope_analysis.R")
-    subprocess.run(
-        [executable, str(script), str(csv_path), str(output_dir)],
-        check=True,
-    )
+    command = rscript_command(str(script), str(csv_path), str(output_dir), executable=rscript)
+    subprocess.run(command, check=True)
     result = output_dir / "slope_results_R.csv"
     if not result.is_file():
-        rscript_command(
-            str(script),
-            str(csv_path),
-            str(output_dir),
-            executable=rscript,
-        ),
+        raise FileNotFoundError(f"R slope analysis produced no {result}")
     return result
 
 

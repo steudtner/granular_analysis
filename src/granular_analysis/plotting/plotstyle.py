@@ -28,7 +28,7 @@ VELOCITY_SCALE = float(np.sqrt(VELOCITY_GRAVITY * VELOCITY_DIAMETER))
 FLUID_MAGNITUDE_CMAP = "inferno"
 PARTICLE_SPEED_STEPS = 10
 Q_SCALE = VELOCITY_GRAVITY / VELOCITY_DIAMETER
-Q_LABEL = r"$Q\,g^{-1} D_{\mathrm{eq}}$"
+Q_LABEL = r"$Q / (g / D_{\mathrm{eq}})$"
 
 COLORS = {'Kugel': '#000000', 'Prolat': '#000099', 'Oblat': '#cc6600'}
 OUTPUT_DIR = Path(__file__).resolve().parents[4] / 'bilder' / 'generiert'
@@ -121,10 +121,10 @@ def visible_fluid_range(values, x, y, bounds):
 
 
 def velocity_label(phase, component='magnitude'):
-    """Dimensionless speed/component label using inverse half powers of g and D_eq."""
+    """Dimensionless speed/component label with the scale in the denominator."""
     numerator = (rf'\Vert\mathbf{{u}}_{{{phase}}}\Vert' if component == 'magnitude'
                  else rf'{component}_{{{phase}}}')
-    return '$' + numerator + r'\,g^{-1/2} D_{\mathrm{eq}}^{-1/2}$'
+    return '$' + numerator + r' / (g D_{\mathrm{eq}})^{1/2}$'
 
 
 def legend_above(ax):

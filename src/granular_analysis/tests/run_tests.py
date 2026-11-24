@@ -9,7 +9,6 @@ if ROOT not in sys.path:
 
 tests = [
     'tests.test_alpha2d',
-    'tests.test_mesh_utils',
 ]
 
 failed = 0

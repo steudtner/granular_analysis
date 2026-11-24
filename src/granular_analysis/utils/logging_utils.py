@@ -7,14 +7,14 @@ def suppress_noise() -> None:
     """Silence WARNING/INFO/DEBUG output from all loggers.
 
     logging.basicConfig() only works when no handlers exist yet.
-    For already-initialised loggers (alphashape, trimesh, root) we must
+    For already-initialised loggers (alphashape, root) we must
     set the level directly on each logger object.
     """
     # Root logger
     logging.getLogger().setLevel(logging.ERROR)
 
     # Known noisy third-party loggers
-    for name in ("alphashape", "trimesh", "shapely", "root"):
+    for name in ("alphashape", "shapely", "root"):
         logging.getLogger(name).setLevel(logging.ERROR)
 
     # Suppress all existing handlers on all known loggers

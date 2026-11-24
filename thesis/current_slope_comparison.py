@@ -74,7 +74,7 @@ def main():
     for ax,row,label in zip(axes.flat,fits.itertuples(),tables[0].modell):
         ax.scatter(points.x,points.z_max,s=8,color='black',label='Oberkante')
         ax.plot(np.fromstring(row.x_pred,sep=';'),np.fromstring(row.y_pred,sep=';'),label=label)
-        ax.set(xlabel=r'$x\,D_{\mathrm{eq}}^{-1}$',ylabel=r'Höhe $y\,D_{\mathrm{eq}}^{-1}$')
+        ax.set(xlabel=r'$x / D_{\mathrm{eq}}$',ylabel=r'Höhe $y / D_{\mathrm{eq}}$')
         ax.legend(loc='upper center',bbox_to_anchor=(.5,1.24),ncol=2)
     plotstyle.save(fig,'kap6_2_slope_jainsu_modelle')
     plt.close(fig)

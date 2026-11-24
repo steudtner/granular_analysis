@@ -174,3 +174,89 @@ def test_slice_preserves_actual_cell_faces(fluid_case, component):
     np.testing.assert_allclose(result['x_edges'], [0., 1., 2.])
     np.testing.assert_allclose(result['y_edges'], [0., 1., 2.])
     assert len(result['x_edges']) == len(result['x']) + 1
+
+
+def test_vortex_filter_positive_q_and_negative_lambda2():
+    from granular_analysis.io.fluid_slice import filter_vortex_slice
+    values = np.array([[-10., -2., -1., 0., 1., 2., 10., np.nan]])
+    fluid = dict(component='q', values=values)
+    result = filter_vortex_slice(fluid, .2, reference_percentile=100)
+    np.testing.assert_array_equal(np.isfinite(result['values']), [[False,False,False,False,False,True,True,False]])
+    assert result['vortex_threshold_value'] == 2
+    assert np.isfinite(values[0,4])
+    result = filter_vortex_slice(dict(fluid, component='lambda2'), .2, reference_percentile=100)
+    np.testing.assert_array_equal(np.isfinite(result['values']), [[True,True,False,False,False,False,False,False]])
+    result = filter_vortex_slice(fluid, .2, reference_max=50)
+    assert np.isfinite(result['values']).sum() == 1
+    assert result['vortex_threshold_value'] == 10
+
+
+def test_vortex_filter_empty_structure_and_invalid_thresholds():
+    from granular_analysis.io.fluid_slice import filter_vortex_slice
+    result = filter_vortex_slice(dict(component='q', values=np.array([[-2.,0.,np.nan]])), .2)
+    assert np.isnan(result['values']).all()
+    assert result['vortex_reference_max'] == 0
+    for fraction in (-.1, 1.1, np.nan):
+        with pytest.raises(ValueError):
+            filter_vortex_slice(dict(component='q', values=np.ones((2,2))), fraction)
+    with pytest.raises(ValueError):
+        filter_vortex_slice(dict(component='magnitude', values=np.ones((2,2))), .2)
+
+
+@pytest.mark.parametrize("component,expected", [("q", -1.5), ("lambda2", 1)])
+def test_full_volume_matches_cell_center_slices(fluid_case, component, expected):
+    from granular_analysis.io.fluid_slice import load_fluid_volume
+    volume = load_fluid_volume(fluid_case, 10, component)
+    assert volume['values'].shape == (2, 2, 2)
+    assert len(volume['z_edges']) == 3
+    np.testing.assert_allclose(volume['values'], expected)
+    for k, z in enumerate(volume['z']):
+        plane = load_fluid_slice(fluid_case, 10, z, component)
+        np.testing.assert_allclose(volume['values'][k], plane['values'])
+
+
+def test_robust_vortex_reference_ignores_single_extreme():
+    from granular_analysis.io.fluid_slice import filter_vortex_slice
+    values = np.r_[np.ones(1000), 100000.0, -100000.0, np.nan]
+    filtered = filter_vortex_slice(dict(component='q', values=values), .2)
+    assert filtered['vortex_reference_value'] == 1
+    assert filtered['vortex_threshold_value'] == .2
+    assert filtered['vortex_raw_maximum'] == 100000
+    assert np.isfinite(filtered['values']).sum() == 1001
+
+
+def test_pooled_percentile_uses_cells_not_mean_frame_percentiles(tmp_path):
+    from granular_analysis.io.fluid_slice import VortexReferencePool
+    a = np.r_[np.arange(1., 1001), -1, np.nan]
+    b = np.array([100000.])
+    with VortexReferencePool(tmp_path) as pool:
+        pool.add(a)
+        pool.add(b)
+        assert pool.count == 1001
+        assert pool.maximum == 100000
+        assert pool.percentile(99) == pytest.approx(np.percentile(np.r_[np.arange(1.,1001), b],99))
+    assert pool.file.closed
+
+
+def test_coarse_volume_crop_avoids_outside_cells_and_keeps_gradients(fluid_case):
+    from granular_analysis.io.fluid_slice import load_fluid_volume
+    folder = fluid_case.results / 'fluid'
+    (fluid_case.results / 'rst_info.dat').write_text(
+        'counter t nx ny nz sx sy sz ex ey ez xper yper zper\n'
+        '3 2.0 40 40 12 0 0 0 41 41 13 F F F\n')
+    for axis, size in zip('xyz', [42,42,14]):
+        np.savetxt(folder / f'{axis}.dat', np.column_stack((np.arange(size)-.5, np.arange(size))))
+    zz, yy, xx = np.indices((14,42,42))
+    velocity = np.stack((-(yy-.5), xx-.5, np.zeros_like(zz)), axis=-1).astype('>f8')
+    with (folder/'uvw_000003.bin').open('wb') as stream:
+        np.array([1211214,velocity.size],dtype='>i4').tofile(stream)
+        velocity.tofile(stream)
+    full = load_fluid_volume(fluid_case, 10, 'q', stride=2)
+    cropped = load_fluid_volume(fluid_case, 10, 'q', stride=2, xlim=(8,13), ylim=(8,13))
+    assert cropped['values'].shape[0] == full['values'].shape[0]
+    assert cropped['values'].shape[1] < full['values'].shape[1]
+    assert cropped['values'].shape[2] < full['values'].shape[2]
+    np.testing.assert_allclose(cropped['values'], 1, atol=1e-12)
+    assert cropped['x_edges'][0] > full['x_edges'][0]
+    assert cropped['y_edges'][-1] < full['y_edges'][-1]
+    assert cropped['z_edges'][-1] == full['z_edges'][-1]

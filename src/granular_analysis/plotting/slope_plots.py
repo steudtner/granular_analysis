@@ -114,8 +114,8 @@ def _plot_single_model(
     # --------------------------------------------------------------
     # 6️⃣  Axis labels
     # --------------------------------------------------------------
-    ax.set_xlabel(r"$x\,D_{Eq}^{-1}$", fontsize=10)
-    ax.set_ylabel(r"$z\,D_{Eq}^{-1}$", fontsize=10)
+    ax.set_xlabel(r"$x / D_{Eq}$", fontsize=10)
+    ax.set_ylabel(r"$z / D_{Eq}$", fontsize=10)
     ax.set_xlim(*xlim)
     ax.set_ylim(*ylim)
     ax.tick_params(axis="both", labelsize=10)

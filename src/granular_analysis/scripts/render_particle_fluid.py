@@ -139,7 +139,7 @@ def run_particle_fluid(case, output, *, counter=None, time=None, z=2.25,
             values, fluid["x"][ix], fluid["y"][iy], (xmin, xmax, ymin, ymax))
     if clim is not None:
         vmin, vmax = map(float, clim)
-    labels = {'magnitude':r'$\Vert\mathbf{u}_f\Vert$', 'pressure':r'$p\,\rho_f^{-1} g^{-1} D_{eq}^{-1}$',
+    labels = {'magnitude':r'$\Vert\mathbf{u}_f\Vert$', 'pressure':r'$p / (g\rho_f D_{eq})$',
               'u':r'$u_f$', 'v':r'$v_f$', 'w':r'$w_f$', 'q':plotstyle.Q_LABEL, 'lambda2':r'$\lambda_2$'}
     if velocity_component:
         labels[component] = plotstyle.velocity_label('f', component)
@@ -153,7 +153,7 @@ def run_particle_fluid(case, output, *, counter=None, time=None, z=2.25,
             plotstyle.draw_fluid_grid(ax, fluid, (xmin, xmax, ymin, ymax))
         return mappable
     def format_axes(ax):
-        ax.set(xlim=(xmin,xmax),ylim=(ymin,ymax),xlabel=r'$x\,D_{eq}^{-1}$',ylabel=r'$y\,D_{eq}^{-1}$')
+        ax.set(xlim=(xmin,xmax),ylim=(ymin,ymax),xlabel=r'$x / D_{eq}$',ylabel=r'$y / D_{eq}$')
         tick_step = 2.5 if fluid_grid else 5
         ax.set_yticks(np.arange(np.ceil(ymin/tick_step)*tick_step, ymax+1e-9, tick_step))
         if fluid_grid:

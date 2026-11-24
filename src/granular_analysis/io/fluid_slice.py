@@ -96,7 +96,9 @@ def nearest_frame(case, time, component=None):
     return min(candidates, key=lambda item: (abs(item[0] - time), item[0], item[1]))
 
 
-def load_fluid_slice(case, particle_counter, z_plane, component="magnitude"):
+def load_fluid_slice(case, particle_counter, z_plane, component="magnitude", *, volume=False, volume_stride=1, volume_xlim=None, volume_ylim=None):
+    if not isinstance(volume_stride, int) or volume_stride < 1:
+        raise ValueError("Volume stride must be a positive integer")
     component = component.lower()
     if component not in {"magnitude", "u", "v", "w", "pressure", "lambda2", "q"}:
         raise ValueError(f"Unknown fluid component: {component}")
@@ -130,15 +132,38 @@ def load_fluid_slice(case, particle_counter, z_plane, component="magnitude"):
     field = np.memmap(path, mode="r", dtype=">f8", offset=offset,
                       shape=(sizes[2], sizes[1], sizes[0], dof))
     indices = [np.arange(1, n + 1) - start for n, start in zip(counts, starts)]
+    physical_indices = indices
+    periods = [grid[index[-1], 1] for grid, index in zip(grids, physical_indices)]
+    if volume and volume_stride > 1:
+        indices = [index[::volume_stride] for index in physical_indices]
+    sampled_indices = indices.copy()
+    crop_slices = [slice(None), slice(None), slice(None)]
+    for axis, limits in enumerate((volume_xlim, volume_ylim)):
+        if not volume or limits is None:
+            continue
+        if len(limits) != 2 or not np.isfinite(limits).all() or limits[0] >= limits[1]:
+            raise ValueError("Volume limits must be finite and increasing")
+        centers = grids[axis][sampled_indices[axis], 0]
+        first = max(0, int(np.searchsorted(centers, limits[0])) - 3)
+        stop = min(len(centers), int(np.searchsorted(centers, limits[1], side='right')) + 3)
+        if stop <= first or limits[1] < centers[0] or limits[0] > centers[-1]:
+            raise ValueError("Volume limits do not intersect the fluid grid")
+        crop_slices[axis] = slice(first, stop)
+        indices[axis] = sampled_indices[axis][first:stop]
     x, y, z = [grid[index, 0] for grid, index in zip(grids, indices)]
     edges = {}
-    for axis, grid, index in zip('xy', grids[:2], indices[:2]):
-        # PRIME column 1 stores centres, column 2 the right cell faces.
-        first = int(index[0])
+    for axis, grid, full_index, cropped in zip('xyz', grids, sampled_indices, crop_slices):
+        first = int(full_index[0])
         left = grid[first-1, 1] if first > 0 else 2*grid[first, 0]-grid[first, 1]
-        edges[f'{axis}_edges'] = np.r_[left, grid[index, 1]]
-    periodic = [row[f"{axis}per"].upper() in {"T", ".T.", ".TRUE."}
-                for axis in "xyz"]
+        if volume and volume_stride > 1:
+            centers = grid[full_index, 0]
+            right = grid[physical_indices['xyz'.index(axis)][-1], 1]
+            full_edges = np.r_[left, (centers[:-1]+centers[1:])/2, right]
+        else:
+            full_edges = np.r_[left, grid[full_index, 1]]
+        edges[f'{axis}_edges'] = full_edges[cropped.start:None if cropped.stop is None else cropped.stop+1]
+    periodic = [row[f"{axis}per"].upper() in {"T", ".T.", ".TRUE."} for axis in "xyz"]
+    gradient_periodic = [flag and len(index) == len(full) for flag, index, full in zip(periodic, indices, sampled_indices)]
 
     def previous(index, axis):
         prev = index - 1
@@ -160,13 +185,13 @@ def load_fluid_slice(case, particle_counter, z_plane, component="magnitude"):
         center = plane(k)
         gradient = np.empty(center.shape + (3,))
         for axis, coordinates in enumerate((x, y)):
-            period = grids[axis][indices[axis][-1], 1] if periodic[axis] else None
+            period = periods[axis] if gradient_periodic[axis] else None
             gradient[..., axis] = spatial_derivative(center, coordinates, 1-axis, period)
         if len(z) < 2:
             raise ValueError("Vortex criteria require at least two cells per direction")
         position = int(np.flatnonzero(indices[2] == k)[0])
         if periodic[2]:
-            length = grids[2][indices[2][-1], 1]
+            length = periods[2]
             neighbors = [(position - 1) % len(z), position, (position + 1) % len(z)]
             coords = np.array([z[neighbors[0]], z[position], z[neighbors[2]]])
             if position == 0:
@@ -187,10 +212,31 @@ def load_fluid_slice(case, particle_counter, z_plane, component="magnitude"):
             gradient[..., 2] += coefficient * (center if neighbor == position else plane(indices[2][neighbor]))
         return gradient
 
+    if volume:
+        # Process one z plane at a time to bound gradient/eigensolver memory.
+        values = np.empty((len(z), len(y), len(x)))
+        for position, k in enumerate(indices[2]):
+            if component in {"q", "lambda2"}:
+                values[position] = vortex_criterion(gradient_plane(k), component)
+            else:
+                sampled = plane(k)
+                values[position] = (sampled if pressure else
+                    np.linalg.norm(sampled, axis=-1) if component == "magnitude" else
+                    sampled[..., "uvw".index(component)])
+        if pressure:
+            input_path = case.case_root / "input.dat"
+            gravity = read_gravity(input_path)
+            if not np.isfinite(gravity) or gravity <= 0 or not np.isfinite(D_EQ) or D_EQ <= 0:
+                raise ValueError("Pressure normalization requires positive gravity and D_EQ")
+            values /= read_fluid_density(input_path) * gravity * D_EQ
+        return {"x": x, "y": y, "z": z, **edges, "values": values,
+                "component": component, "time": time, "counter": counter,
+                "volume_stride": volume_stride}
+
     zs = z
     ks = indices[2]
     if periodic[2]:
-        length = grids[2][indices[2][-1], 1]
+        length = periods[2]
         z_plane = z_plane % length
         zs = np.concatenate(([z[-1] - length], z, [z[0] + length]))
         ks = np.concatenate(([ks[-1]], ks, [ks[0]]))
@@ -220,3 +266,68 @@ def load_fluid_slice(case, particle_counter, z_plane, component="magnitude"):
                   else sampled[..., "uvw".index(component)])
     return {"x": x, "y": y, **edges, "values": values, "component": component,
             "time": time, "counter": counter}
+
+
+def filter_vortex_slice(fluid, fraction, reference_max=None, reference_percentile=99.0):
+    """Mask weak/non-vortical cells: Q>0 or lambda2<0; preserve raw units."""
+    if fluid['component'] not in {'q', 'lambda2'}:
+        raise ValueError('Vortex threshold requires Q or lambda2')
+    if not np.isfinite(fraction) or not 0 <= fraction <= 1:
+        raise ValueError('Vortex threshold must be a fraction between 0 and 1')
+    values = np.asarray(fluid['values'], dtype=float)
+    strength = values if fluid['component'] == 'q' else -values
+    finite = strength[np.isfinite(strength) & (strength > 0)]
+    if not np.isfinite(reference_percentile) or not 0 < reference_percentile <= 100:
+        raise ValueError('Vortex reference percentile must be in (0, 100]')
+    raw_maximum = float(finite.max()) if finite.size else 0.0
+    maximum = float(np.percentile(finite, reference_percentile)) if finite.size else 0.0
+    if reference_max is not None:
+        if not np.isfinite(reference_max) or reference_max < 0:
+            raise ValueError('Vortex reference maximum must be finite and nonnegative')
+        maximum = float(reference_max)
+    keep = np.isfinite(strength) & (strength > 0) & (strength >= fraction * maximum)
+    return {**fluid, 'values': np.where(keep, values, np.nan),
+            'vortex_threshold_fraction': float(fraction), 'vortex_reference_max': maximum,
+            'vortex_threshold_value': fraction * maximum,
+            'vortex_reference_percentile': float(reference_percentile),
+            'vortex_reference_value': maximum, 'vortex_raw_maximum': raw_maximum}
+
+
+def load_fluid_volume(case, particle_counter, component="magnitude", *, stride=1, xlim=None, ylim=None):
+    """Read all physical fluid cells; evaluate vortex gradients plane by plane."""
+    return load_fluid_slice(case, particle_counter, None, component, volume=True, volume_stride=stride, volume_xlim=xlim, volume_ylim=ylim)
+
+
+class VortexReferencePool:
+    """Exact pooled percentile using a temporary file instead of retaining fields."""
+    def __init__(self, directory=None):
+        import tempfile
+        self.file = tempfile.TemporaryFile(dir=directory)
+        self.count = 0
+        self.maximum = 0.0
+
+    def add(self, strength):
+        strength = np.asarray(strength, dtype=float)
+        values = strength[np.isfinite(strength) & (strength > 0)]
+        if values.size:
+            values.tofile(self.file)
+            self.count += values.size
+            self.maximum = max(self.maximum, float(values.max()))
+
+    def percentile(self, percentile=99.0):
+        if not np.isfinite(percentile) or not 0 < percentile <= 100:
+            raise ValueError('Vortex reference percentile must be in (0, 100]')
+        if not self.count:
+            return 0.0
+        self.file.flush()
+        values = np.memmap(self.file, dtype=np.float64, mode='r+', shape=(self.count,))
+        try:
+            return float(np.percentile(values, percentile, overwrite_input=True))
+        finally:
+            del values
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.file.close()

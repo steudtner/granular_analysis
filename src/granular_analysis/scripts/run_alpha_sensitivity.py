@@ -112,8 +112,8 @@ def run_sensitivity(
             axis.grid(True, alpha=0.2)
             axis.set_xlim(x_min - x_padding, x_max + x_padding)
             axis.set_ylim(y_min - y_padding, y_max + y_padding)
-        figure.supxlabel(r"$x\,D_{\mathrm{Eq}}^{-1}$")
-        figure.supylabel(r"$y\,D_{\mathrm{Eq}}^{-1}$")
+        figure.supxlabel(r"$x / D_{\mathrm{Eq}}$")
+        figure.supylabel(r"$y / D_{\mathrm{Eq}}$")
         figure.suptitle(
             f"Alpha-Shapes für primeJainSU bei z = {z_value:g}", fontsize=10
         )

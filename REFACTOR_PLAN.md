@@ -28,6 +28,6 @@ broken imports, and no supported pipeline. This removal does not include the
 
 ## Remaining compatibility code
 
-`run_slice_analysis.py`, `run_depth_slice_analysis.py`, `analysis/slicing.py`,
-and `utils/mesh.py` remain for direct users, but are not part of the master
+`run_slice_analysis.py`, `run_depth_slice_analysis.py`, and
+`analysis/slicing.py` remain for direct users, but are not part of the master
 pipeline. New features should target the supported workflows above.

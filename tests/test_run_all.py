@@ -187,3 +187,58 @@ def test_renderview_bounds_and_cache(monkeypatch, tmp_path):
     assert len(calls) == 2
     run_all.run_renderview(**options, ylim=(2, 10))
     assert calls[-1][:4] == (*run_all.RENDER_BOUNDS[:2], 2, 10)
+
+
+def test_renderview_midplane_load_and_cache(monkeypatch, tmp_path):
+    import sys
+    from types import SimpleNamespace
+    from granular_analysis.scripts import run_all
+    from granular_analysis.paths import CasePaths
+    from granular_analysis.io import fluid_slice
+
+    calls = []
+    slices = []
+    fluid = {"component": "pressure"}
+    def load(case, counter, z, component):
+        slices.append((counter, z, component))
+        return fluid
+    def render(particles, **kwargs):
+        calls.append(kwargs)
+        kwargs['output_dir'].mkdir(parents=True, exist_ok=True)
+        for view in kwargs['views']:
+            for ext in ('png', 'pdf', 'svg'):
+                (kwargs['output_dir'] / f"{kwargs['filename_prefix']}_{view}.{ext}").touch()
+    monkeypatch.setitem(sys.modules, 'granular_analysis.plotting.particle_3d_plotter',
+                        SimpleNamespace(render_particle_views=render))
+    monkeypatch.setattr(run_all, '_load_particles', lambda *args: [])
+    monkeypatch.setattr(fluid_slice, 'load_fluid_slice', load)
+    options = dict(case=CasePaths.from_input(tmp_path), counter=12, out_dir=tmp_path / 'out')
+    run_all.run_renderview(**options, fluid_midplane=True, fluid_component='pressure', lz=8)
+    assert slices == [(12, 4, 'pressure')]
+    assert calls[-1]['filename_prefix'] == 'particles_000012_fluid_midplane_pressure'
+    assert calls[-1]['views'] == ('isometric', 'top', 'front', 'side')
+    assert calls[-1]['fluid'] is fluid
+    assert calls[-1]['fluid_z'] == 4
+    assert calls[-1]['fit_axes'] == (True, True, True)
+    run_all.run_renderview(**options, fluid_midplane=True, fluid_component='pressure', lz=8)
+    assert len(calls) == 1
+    run_all.run_renderview(**options)
+    assert len(calls) == 2
+    assert calls[-1]['fluid'] is None
+    assert calls[-1]['filename_prefix'] == 'particles_000012'
+
+    run_all.run_renderview(**options, xlim=(10, 30), ylim=(0, 15))
+    assert calls[-1]['fit_axes'] == (False, False, True)
+    assert calls[-1]['domain_bounds'][:4] == (10, 30, 0, 15)
+
+    assert calls[-1]['window_size'] == (8000, 5600)
+    run_all.run_renderview(**options, xlim=(10, 30), ylim=(0, 15), window_size=(10000, 7000))
+    assert calls[-1]['window_size'] == (10000, 7000)
+    assert len(calls) == 4
+
+
+def test_render_resolution_parser():
+    from granular_analysis.scripts.run_all import build_parser
+    parser = build_parser()
+    assert tuple(parser.parse_args([]).render_resolution) == (8000, 5600)
+    assert parser.parse_args(['--render-resolution', '10000', '7000']).render_resolution == [10000, 7000]

@@ -294,8 +294,8 @@ def compare_kinetic_energy(cases: Dict[str, str], out_dir: str | None = None, n_
 
     # set labels consistent with per-case plots
     if use_physical_all:
-        ax.set_xlabel(r"$t g^{1/2} D_{\mathrm{Eq}}^{-1/2}$", fontsize=10)
-        ax.set_ylabel(r"$\sum E_{kin} \,\rho^{-1} g^{-1} D_{\mathrm{Eq}}^{-4}$", fontsize=10)
+        ax.set_xlabel(r"$t / (D_{\mathrm{Eq}} / g)^{1/2}$", fontsize=10)
+        ax.set_ylabel(r"$\sum E_{kin}  / (g\rho D_{\mathrm{Eq}}^{4})$", fontsize=10)
         ax.set_title("Normalized kinetic energy over time", fontsize=10)
     else:
         ax.set_xlabel("time", fontsize=10)

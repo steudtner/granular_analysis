@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "checkpoint-**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Install TeX Live (Computer Modern plots)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            texlive-latex-base texlive-latex-recommended texlive-latex-extra \
+            texlive-fonts-recommended cm-super dvipng
+
+      - name: Install package
+        run: python -m pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: ruff check src/granular_analysis tests
+
+      - name: Tests
+        run: python -m pytest -q

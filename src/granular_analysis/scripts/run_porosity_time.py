@@ -45,7 +45,7 @@ def plot_porosity_time(profiles, summary, output, *, n_profiles=15, lz=LZ):
             bar.set_label(r'Zeit $t$ (Simulationseinheiten)')
             if lo == hi:
                 bar.set_ticks([lo])
-            ax.set(xlabel=r'$z\,D_{\mathrm{eq}}^{-1}$', ylabel=r'Porosität $\phi(z,t)$', xlim=(0,lz/D_EQ))
+            ax.set(xlabel=r'$z / D_{\mathrm{eq}}$', ylabel=r'Porosität $\phi(z,t)$', xlim=(0,lz/D_EQ))
             ax.grid(alpha=.2)
             plotstyle.export_figure(fig, output / 'porosity_profiles.png', dpi=250)
         finally:

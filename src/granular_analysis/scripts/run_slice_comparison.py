@@ -120,7 +120,7 @@ def _plot_profile(
             )
 
     ax.set_xlabel(
-        r"$z\,D_{\mathrm{Eq}}^{-1}$"
+        r"$z / D_{\mathrm{Eq}}$"
     )
 
     ax.set_ylabel(ylabel)

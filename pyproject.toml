@@ -20,9 +20,9 @@ dependencies = [
 
 [project.optional-dependencies]
 render = ["pyvista"]
-mesh = ["trimesh"]
+video = ["pyvista", "imageio-ffmpeg"]
 progress = ["tqdm"]
-dev = ["pytest", "ruff", "trimesh"]
+dev = ["pytest", "ruff"]
 
 [project.scripts]
 granular-analyze = "granular_analysis.scripts.run_all:main"
@@ -38,6 +38,12 @@ exclude = ["granular_analysis.tests*"]
 
 [tool.setuptools.exclude-package-data]
 "granular_analysis" = ["tests/*.py"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "src/granular_analysis/tests"]

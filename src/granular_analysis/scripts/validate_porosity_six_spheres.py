@@ -57,7 +57,7 @@ def run_benchmark(output):
         ax.text(*(p['x'][:2]/2), str(p['id']), ha='center', va='center')
     result = porosity2d.compute_slice_porosity(particles, 2., 0., 6.)
     ax.plot(*(result['shape'].T/2), color='black', label='Routine: Hülle mit 720 Punkten/Kreis')
-    ax.set(xlim=(-.6, 2.6), ylim=(-.6, 2.35), xlabel=r'$x\,D_{\mathrm{eq}}^{-1}$', ylabel=r'$y\,D_{\mathrm{eq}}^{-1}$',
+    ax.set(xlim=(-.6, 2.6), ylim=(-.6, 2.35), xlabel=r'$x / D_{\mathrm{eq}}$', ylabel=r'$y / D_{\mathrm{eq}}$',
            title='Sechs berührende Kugeln: Äquatorschnitt z/Deq = 1')
     ax.set_aspect('equal'); ax.legend(loc='upper center', bbox_to_anchor=(.5, -.15), fontsize=10)
     plotstyle.prepare_figure(fig); fig.tight_layout(); plotstyle.export_figure(fig, output / 'arrangement.png', dpi=180); plt.close(fig)

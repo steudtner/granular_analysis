@@ -42,7 +42,6 @@ RESULTS_DIR = (
 LZ = 5.0
 
 ALPHA_2D = 0.6
-ALPHA_3D = 0.6
 
 Z_LEVELS = np.round(
     np.arange(0.0, LZ + 0.1, 0.05),

@@ -61,7 +61,6 @@ Run these commands from the repository directory:
 ```bash
 python -m pip install -e .
 python -m pip install -e ".[render]"    # optional PyVista particle renderer
-python -m pip install -e ".[mesh]"      # optional mesh utilities
 python -m pip install -e ".[progress]"  # optional progress bars
 python -m pip install -e ".[dev]"       # optional test/development tools
 ```
@@ -115,23 +114,29 @@ where the command starts. `--out` overrides `GRANULAR_RESULTS_DIR`.
 | --- | --- |
 | `2d` | Computes porosity and the upper edge at one z-plane from the latest TRN frame. |
 | `slices` | Computes area and porosity profiles across configured z-levels. |
-| `porosity_time` | Opt-in time-coloured z profiles and mean porosity ± spatial standard deviation over time. |
 | `energy` | Computes the energy history from transient and monitor data. |
 | `slope` | Runs the packaged R slope analysis on the 2D output. Requires `Rscript`, or the executable selected by `RSCRIPT`. |
 | `collision_distances` | Computes collision/contact distances for a frame with TRN data and all three collision RK stages. |
 | `renderview` | Produces isometric, top, front, and side PNGs plus matching PDF/SVG containers. Requires the `render` dependency group. |
+| `alignment` | Compares instantaneous particle velocities with the longest semiaxis (prolate) or disk normal (oblate), including DBSCAN cluster diagnostics. |
+| `porosity_time` | Time-coloured z profiles and mean porosity ± spatial standard deviation over time. |
 | `particle_fluid` | Combines frontal particle rendering and a synchronous 2D fluid slice, with fixed x/y limits. Requires `render`. |
+| `particle_shape` | Input-only shape factors, Zingg diagram, Wadell sphericity, and DIN sieve curves. |
+| `deposit_orientation` | Orientation histograms of the deposit per spatial x-bin, with a cut view and optional renderview combination. |
+| `renderview_video` | Renders one camera view as an MP4, optionally with a fluid plane or vortex filtering. Requires the `video` dependency group. |
 | `alpha_sensitivity` | Sweeps alpha-shape area and porosity over an alpha range, then writes a curve plot, a panel of alpha shapes, and a CSV. |
 | `slope_alpha_sensitivity` | Runs the 2D upper-edge and R slope-model pipeline for every alpha value, then compares model AIC/BIC across the range. |
 
 ```bash
-granular-analyze                              # run all pipelines
-granular-analyze --only 2d slices energy     # run a selected set
-granular-analyze --exclude slope renderview  # run all except a selected set
+granular-analyze                              # run the standard pipelines
+granular-analyze --only 2d slices energy      # run a selected set
+granular-analyze --exclude slope renderview   # run the standard set except a selection
 ```
 
-The two sensitivity pipelines are opt-in and are not included by the bare
-`granular-analyze` command, because they run multiple analyses.
+The first six pipelines (`2d`, `slices`, `energy`, `slope`, `collision_distances`,
+`renderview`) run by default. All other pipelines are opt-in: they are slower,
+need extra dependencies, or analyse several frames, and are therefore excluded
+from the bare `granular-analyze` command.
 
 ## All command-line options
 
@@ -146,7 +151,7 @@ granular-analyze [OPTIONS]
 | Option | Meaning | Copy-ready example |
 | --- | --- | --- |
 | `-h`, `--help` | Show built-in help and exit. | `granular-analyze --help` |
-| `--only NAME [NAME ...]` | Run only these pipelines. Valid names: `2d`, `slices`, `energy`, `slope`, `collision_distances`, `renderview`, `alpha_sensitivity`, `slope_alpha_sensitivity`. | `granular-analyze --only 2d slices` |
+| `--only NAME [NAME ...]` | Run only these pipelines. Valid names: `2d`, `slices`, `energy`, `slope`, `collision_distances`, `renderview`, `alignment`, `porosity_time`, `particle_fluid`, `particle_shape`, `deposit_orientation`, `renderview_video`, `alpha_sensitivity`, `slope_alpha_sensitivity`. | `granular-analyze --only 2d slices` |
 | `--exclude NAME [NAME ...]` | Remove these pipelines from the selected set. | `granular-analyze --exclude slope renderview` |
 | `--path PATH` | Select a case root or supported results subdirectory. Optional when inferred from the environment or current directory. | `granular-analyze --path /data/run42 --only 2d` |
 | `--folder PATH` | Deprecated alias for `--path`. Never supply both. | `granular-analyze --folder /data/run42 --only 2d` |
@@ -944,3 +949,245 @@ Outputs with arrows have an `_arrows` suffix.
 ```bash
 granular-analyze --path . --only 2d --fluid magnitude --z 2.25 --velocity-arrows
 ```
+
+Die isometrische `renderview` umfasst die vollständigen Partikeloberflächen und
+berücksichtigt die projizierte x-Ausdehnung sowie das Bildseitenverhältnis.
+Mit `--fluid-midplane` lässt sich das Fluidfeld als x-y-Schnitt in die
+Mittelebene bei `z = --lz / 2` legen (Standard: Geschwindigkeitsbetrag).
+Partikel und Fluid stammen dabei vom gleichen Simulationszeitpunkt.
+
+```bash
+granular-analyze --only renderview --path CASE --time 20 --fluid-midplane
+granular-analyze --only renderview --path CASE --time 20 --fluid-midplane --fluid pressure --lz 5
+```
+
+Der Fluid-Schnitt wird in allen vier Ansichten eingeblendet. Die Partikel
+bleiben deckend und verdecken die dahinterliegende Fluidfläche. In Ansichten auf die Kante markieren farbige
+Zellkanten die Lage der Mittelebene. Dateien erhalten den Zusatz
+`_fluid_midplane_<Feld>`, zum Beispiel
+`particles_000012_fluid_midplane_pressure_side.png`.
+
+`--xlim XMIN XMAX` und `--ylim YMIN YMAX` begrenzen auch die isometrische
+Ansicht: Partikel und Fluidfläche werden am angegebenen Bereich abgeschnitten.
+Nur Achsen ohne explizite Grenzen werden automatisch auf den gesamten Kollaps
+erweitert.
+
+Die Renderauflösung beträgt standardmäßig **8000 × 5600 Pixel**.
+Mit `--red-mobile-particles` werden freie Partikel rot und Wandpartikel grau
+gerendert. Die ersten `--skip-points` Partikel gelten als Wandpartikel
+(Standard: 2000); die Zuordnung hängt nicht von der momentanen Geschwindigkeit ab.
+Die neuen Dateien erhalten den Zusatz `_mobile_red`.
+
+```bash
+granular-analyze --only renderview --path CASE --red-mobile-particles
+```
+
+Mit `--render-resolution WIDTH HEIGHT` kann sie angepasst werden, zum Beispiel
+`--render-resolution 10000 7000`. Eine geänderte Auflösung erzeugt die Bilder neu.
+
+Die Legende sitzt in der isometrischen und seitlichen Ansicht direkt über dem
+oberen Rand der Fluidfläche und liegt im gleichen Winkel. In Ansichten auf die
+Kante bleibt sie unter dem Bild lesbar. SVG und PDF behalten die volle
+Pixelauflösung des eingebetteten Renderbildes.
+
+## Orientierung der Ablagerung in räumlichen Bins
+
+```bash
+granular-analyze --only deposit_orientation --path CASE
+granular-analyze --only deposit_orientation --path CASE --time 90 --orientation-bins 8 --orientation-angle-step 10
+```
+
+Standard: letzter verfügbarer TRN-Frame, sechs gleich breite x-Bins über den
+Bereich der ausgewählten Partikelmittelpunkte und 10°-Winkelklassen. Die Routine
+prüft keinen Stillstand: Ein früherer oder noch bewegter letzter Frame kann
+mit `--counter` oder `--time` gezielt ersetzt werden. `--xlim` setzt den
+x-Bereich der Bins; `--ylim` filtert die Partikel nach Höhe ihres Mittelpunkts.
+Die rechte Grenze des letzten Bins ist eingeschlossen.
+
+Bei Prolaten wird die lokale **a-Achse**, bei Oblaten die lokale **c-Achse**
+(Scheibennormale) verwendet. Nach Rotation in das globale Koordinatensystem
+werden die Winkel zu x (Ausbreitung), y (Vertikale) und z (Querrichtung)
+über `acos(abs(Achsenkomponente))` berechnet. Da die Partikelachse ungerichtet
+ist, liegen die Winkel zwischen 0 und 90°. Geschwindigkeit spielt dabei
+keine Rolle; ruhende Partikel werden ebenfalls ausgewertet.
+
+`--orientation-mode auto` erkennt prolate/oblate Formen über die Halbachsen
+(Toleranz 1e-6 relativ). `--orientation-mode prolate` beziehungsweise `oblate`
+erzwingt die Auswahl von a beziehungsweise c. Nicht eindeutige Achsen,
+Kugeln, nicht rotationssymmetrische Formen im Automatikmodus und fehlende
+Orientierungen sind in der Partikeltabelle als ausgeschlossen gekennzeichnet.
+
+Die konfigurierte Zahl der ersten Wandpartikel wird übersprungen (derzeit
+2000); mit `--skip-points 0` werden alle Partikel eingeschlossen.
+Die Histogramme werden je Form und räumlichem Bin auf die Anzahl gültiger
+Partikel normiert. Die gestrichelte Referenz zeigt eine isotrope Orientierung
+im Raum (`cos(Winkeluntergrenze) - cos(Winkelobergrenze)` je Winkelklasse).
+Die Histogramme haben keine Überschriften „Bin 1“, „Bin 2“ usw.
+Bin-Grenzen und Stichprobengrößen stehen in den CSV- und JSON-Dateien.
+Leere Bins behalten ihre Position und werden gekennzeichnet.
+
+Unter `deposit_orientation/` entstehen eine Abbildung pro ausgewerteter Form
+(PNG, PDF und SVG), eine CSV mit Partikelorientierungen, eine CSV mit
+Histogrammzählwerten und relativen Häufigkeiten sowie JSON-Metadaten mit
+Frame, Zeitpunkt, Bin-Grenzen, Definitionen und Ausschlusszahlen.
+
+Zusätzlich wird eine 2D-Schnittansicht mit y-Winkel-Histogrammen als Insets
+über den zugehörigen x-Bins erzeugt (`*_cut_z2.50_y_insets.svg`). Der exakte
+Partikelschnitt liegt standardmäßig bei `z=LZ/2` und berücksichtigt die
+Periodizität in z. Mit `--z` und `--lz` lässt sich der Schnitt anpassen.
+Die Schnittpartikel und Histogrammbalken sind nach dem Winkel a–y
+(Prolate) beziehungsweise c–y (Oblate) gefärbt. Die Insets enthalten alle
+gültigen Partikel des räumlichen Bins über die gesamte z-Breite, nicht nur
+die vom Schnitt getroffenen Partikel.
+Die Stichprobengröße steht als $N_{\mathrm{Mob}}$ über jedem Histogramm-Inset.
+Mit `--orientation-renderview PFAD_ZUM_PNG` entsteht zusätzlich eine kombinierte
+Abbildung: der Schnitt mit Histogramm-Insets oben, die Renderview darunter.
+Für die Draufsicht speichert Renderview zusätzlich die Projektionskoordinaten;
+beide Ansichten werden am gleichen x-Bereich und an der gleichen Achsenbreite
+ausgerichtet. Die Draufsicht zeigt x/DEq und z/DEq.
+Ohne explizites `--xlim` werden die Bins bei kombinierten Abbildungen über die
+vollständige x-Ausdehnung der Renderview-Partikeloberflächen verteilt,
+einschließlich des festen Betts; leere mobile Bins bleiben erkennbar.
+Beispielsweise kann `particles_001413_mobile_red_top.png` als Draufsicht dienen.
+
+## Renderview als Video mit Fluid
+
+```bash
+granular-analyze --only renderview_video --path CASE --fluid --video-view isometric
+granular-analyze --only renderview_video --path CASE --fluid pressure --video-view side --time-start 0 --time-end 100 --video-speed 0.25 --video-resolution 1920 1344
+```
+
+Es wird ausschließlich die mit `--video-view` gewählte Ansicht berechnet
+(Standard: isometric; weitere Werte: top, front, side). Ohne `--fluid` werden
+nur Partikel gerendert. Die Fluid-Ebene liegt standardmäßig bei **z=0**, hinter den Partikeln in der
+bisherigen Kameraperspektive. `--video-fluid-z` setzt ihre Position, etwa
+`--video-fluid-z 5` für z=LZ bei `--lz 5`. Bei z-periodischem Fluid liefern
+z=0 und z=LZ dieselben Feldwerte. Für nichtperiodische Felder muss diese Ebene innerhalb der
+verfügbaren Fluid-Zellzentren liegen, andernfalls wird ein Fehler ausgegeben.
+Die Kamera verwendet dieselbe Perspektive wie die bisherige `renderview`.
+Die Video-Legende verwendet standardmäßig die normale Größe (Faktor 1.0); mit
+`--video-legend-scale` kann ihre Größe angepasst werden. Kameraausschnitt und Fluid-Farbskala
+bleiben über das gesamte Video konstant; `--xlim`, `--ylim` und `--fluid-clim`
+setzen explizite Grenzen. `--fluid-clim` verwendet dieselben normierten Größen
+wie die statische Darstellung.
+
+Die dimensionslose Zeit wird mit `t = t* sqrt(D_eq/g)` umgerechnet:
+`D_eq = 0.615 mm`, `g = 9.81 m/s²`, also etwa **0.007918 s je t***.
+Die Werte können mit `--video-deq-mm` und `--video-gravity` geändert werden.
+`--video-speed 1` bedeutet Echtzeit, 0.25 vierfache Zeitlupe, 2 doppelte
+Geschwindigkeit. `--time-start` und `--time-end` sind weiterhin in t*-Einheiten.
+Der Zeitstempel im Video zeigt den physikalischen Zeitpunkt des gespeicherten
+Frames in Sekunden. Es werden ausschließlich exakt zeitlich passende
+Partikel-/Fluid-Paare verwendet. Für gleichmäßige Wiedergabezeiten wird das
+jeweils nächste gespeicherte Paar ausgewählt; Frames werden bei Bedarf
+wiederholt. Zwischenzustände werden nicht interpoliert.
+
+Standard: 30 FPS und 1920 × 1344 Pixel; konfigurierbar durch `--video-fps`
+und `--video-resolution WIDTH HEIGHT` (gerade Pixelzahlen). Einzelne Frames
+werden nur einmal gerendert, PDF/SVG-Exporte entfallen im Videomodus.
+Das MP4 liegt unter `renderview_video/`; eine JSON-Datei enthält Auflösung,
+Zeitumrechnung, Kamera, Farbskala und die Zuordnung aller Videoframes. Durch
+die diskrete Bildrate kann die Videolänge um weniger als zwei Frameintervalle
+von der physikalischen Dauer geteilt durch den Wiedergabefaktor abweichen.
+Vorhandene Videos werden nur mit `--force` ersetzt.
+
+Der Encoder benötigt FFmpeg im PATH, `GRANULAR_FFMPEG` oder das Paket
+`imageio-ffmpeg` (`pip install -e 'granular_analysis[video]'`). Im aktuellen
+Workspace ist ein Encoder unter `granular_analysis/.tools/video/` hinterlegt.
+
+Die isometrische Videokamera blickt standardmäßig mit **15° über der xz-Ebene**
+auf den Kollaps. Mit `--video-elevation 0` liegt der Blick vollständig in der
+xz-Ebene. `--video-elevation` akzeptiert Winkel zwischen 0° (einschließlich)
+und 90° (ausschließlich) und wirkt auf die isometrische Ansicht. Die xz-Richtung
+bleibt diagonal, die y-Achse bleibt vertikal. Die statische Renderview behält
+ihren bisherigen Winkel.
+
+```bash
+granular-analyze --only renderview_video --path prolaten/produktion_prolat_eingetaucht --fluid --video-view isometric --video-elevation 15 --video-fluid-z 0 --force
+```
+
+## Wirbelstruktur mit relativem Schwellenwert
+
+```bash
+granular-analyze --only renderview --path CASE --fluid q --vortex-threshold 0.2 --render-views isometric
+granular-analyze --only renderview_video --path CASE --fluid lambda2 --vortex-threshold 0.2 --video-view isometric
+```
+
+`--vortex-threshold 0.2` blendet Fluidzellen unter 20 % der maximalen
+Wirbelstärke aus. Beim Q-Kriterium wird nur Q > 0 berücksichtigt; bei λ₂
+nur λ₂ < 0 mit der Stärke −λ₂. Die Schwelle entspricht damit einem Anteil
+des maximalen positiven Q beziehungsweise des Betrags des stärksten negativen
+λ₂. Werte exakt auf der Schwelle bleiben erhalten. Nicht-wirbelnde und
+schwache Zellen werden transparent; Partikel bleiben deckend.
+Statische Schnitte verwenden das Maximum des geladenen Schnitts; Videos
+verwenden ein gemeinsames Maximum über alle tatsächlich gerenderten
+Quellframes, damit der Filter zeitlich konsistent bleibt.
+
+Die Option funktioniert für `2d`, `slices`, `renderview` und `renderview_video`.
+Bei `renderview` wird die Fluid-Mittelebene automatisch aktiviert.
+`--render-views isometric` beschränkt statische Renderings auf diese Ansicht.
+Gefilterte Renderdateien tragen den Zusatz `_vortex20pct`.
+
+`granular-analyze --only renderview --fluid q --vortex-threshold 0.2 --render-views isometric` renders vortex cells throughout the full fluid volume. The threshold is a fraction of the maximum positive Q in that volume (negative lambda2 for `--fluid lambda2`). Add `--fluid-midplane` to render only the middle z slice.
+
+Full fluid volumes are used only for Q/lambda2 with `--vortex-threshold`; unfiltered fields use a slice. Vortex colors use a logarithmic scale (positive Q or -lambda2), including logarithmic legend ticks.
+
+To render filtered fluid as a video with the static isometric camera:
+```bash
+granular-analyze --only renderview_video --fluid q --vortex-threshold 0.2 --video-view isometric --video-match-renderview --video-resolution 1920 1344 --video-fps 30
+```
+Use `--time-start` and `--time-end` to restrict simulation time. The video uses a fixed vortex threshold and color range across selected playback frames.
+
+### Robuste Wirbelreferenz
+
+Der relative Wirbelfilter verwendet standardmäßig das **99. Perzentil** der
+positiven Wirbelstärken (Q > 0, beziehungsweise −λ₂ für λ₂ < 0), damit
+Einzelspitzen nicht den Schwellenwert bestimmen. `--vortex-threshold 0.2`
+bedeutet 20 % dieser Referenz. `--vortex-percentile 100` stellt das bisherige
+absolute Maximum wieder her.
+
+Für Videos wird das Perzentil exakt über alle positiven Zellwerte der
+tatsächlich gerenderten Quellframes berechnet. Es ist kein Mittelwert der
+Frame-Perzentile; alle Zellen zählen gleich. Die temporäre Speicherung auf
+Disk vermeidet, alle Fluidfelder gleichzeitig im RAM halten zu müssen.
+Schwelle und Farbskala bleiben über den gesamten Film konstant. Die obere
+Farbskalengrenze entspricht der robusten Referenz; höhere Werte bleiben
+sichtbar und erhalten die oberste Farbe. Rohmaximum, Referenz, Perzentil und
+Stichprobengröße werden im JSON protokolliert.
+
+```bash
+granular-analyze --only renderview_video --path prolaten/produktion_prolat_eingetaucht --fluid q --vortex-threshold 0.2 --vortex-percentile 99 --video-fluid-plane --video-fluid-z 0 --video-view isometric --video-elevation 15
+```
+
+`--video-fluid-plane` verwendet wie das bisherige Video einen Schnitt anstatt
+der Wirbelstrukturen im gesamten Volumen. Neue Dateien enthalten `_refp99`.
+
+Für eine 3D-Wirbelvorschau über die komplette z-Breite kann
+`--video-fluid-stride 4` verwendet werden: Jede vierte Fluidzelle pro Richtung
+wird ausgewertet; die Geschwindigkeitsgradienten werden auf diesem gröberen
+Raster berechnet. Feine Wirbel können dabei unaufgelöst bleiben. Der
+räumliche Bereich bleibt vollständig erhalten. `--ylim 0 20` begrenzt die
+Darstellung und die P99-Referenz auf diese Höhe. Ohne `--video-fluid-plane`
+werden bei aktiviertem Wirbelfilter räumliche Strukturen gerendert.
+
+```bash
+granular-analyze --only renderview_video --path prolaten/produktion_prolat_eingetaucht --fluid q --vortex-threshold 0.2 --vortex-percentile 99 --video-fluid-stride 4 --video-view isometric --video-elevation 15 --ylim 0 20 --force
+```
+
+Bei der 3D-Vorschau werden x/y-Grenzen bereits vor dem Einlesen der
+benötigten Werte und vor der Berechnung des Wirbelkriteriums berücksichtigt.
+Je Richtung kommen bis zu drei Randzellen des Vorschaurasters für
+Gradienten hinzu. Die gesamte z-Breite bleibt erhalten. Die Randzellen
+gehen außerhalb der Grenzen nicht in die P99-Referenz ein und werden
+am Kameraausschnitt abgeschnitten.
+
+Die Fluidfelder werden während der Vorbereitung temporär zwischengespeichert
+und beim Rendern wiederverwendet. Dadurch entfällt die zweite Berechnung
+des Q-/λ₂-Feldes. Der Cache wird nach dem Export entfernt. Für Volumenbilder
+wird die Legende am festen oberen Domänenrand platziert, damit sie nicht
+mit den wechselnden Wirbelgrenzen wandert.
+
+Exakte 2D-Schnittplots (`--only 2d`) schreiben standardmäßig PNG, SVG und PDF
+mit identischem Basisnamen. Die PNG-Ausgabe hat 600 dpi. Dafür ist kein
+zusätzlicher CLI-Schalter erforderlich; `--no-velocity-colors` deaktiviert
+weiterhin die Geschwindigkeitsfarben der Partikel.

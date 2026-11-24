@@ -38,8 +38,8 @@ def plot_energy_comparison(tables, output, component="kinetic", normalized=True,
                     add_potential_reference(ax, table, normalized, color=line.get_color(),
                                             label=f"{label}: initial potential (input y, y=0)")
                 combined.append(table.assign(case=label))
-            ax.set_xlabel(r"$tg^{1/2} D_{Eq}^{-1/2}$" if normalized else "Simulation time")
-            ax.set_ylabel(f"{component.capitalize()} energy" + (r" $\,\rho^{-1} g^{-1} D_{Eq}^{-4}$" if normalized else ""))
+            ax.set_xlabel(r"$t / (D_{Eq} / g)^{1/2}$" if normalized else "Simulation time")
+            ax.set_ylabel(f"{component.capitalize()} energy" + (r" $E / (g\rho D_{Eq}^{4})$" if normalized else ""))
             ax.grid(alpha=.25)
             ax.legend(fontsize=10, loc="upper center", bbox_to_anchor=(0.5, -0.18), frameon=False)
             if smoothing_window > 1:

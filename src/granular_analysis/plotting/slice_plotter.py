@@ -47,6 +47,7 @@ def plot_exact_slice_from_ellipsoids(
 
     ``velocity_arrows`` is a compatibility alias for enabling speed colours.
     ``velocity_colors`` overrides it when provided.
+    Exports matching PNG, SVG and PDF files by default.
     """
     if fluid_grid and fluid is None:
         raise ValueError("fluid_grid requires a loaded fluid slice")
@@ -111,6 +112,8 @@ def plot_exact_slice_from_ellipsoids(
         else:
             finite = np.abs(np.asarray(values)[np.isfinite(values)])
             limit = float(finite.max()) if finite.size else 0.0
+            if fluid.get('vortex_reference_value', 0) > 0:
+                limit = fluid['vortex_reference_value'] / (plotstyle.Q_SCALE if fluid['component'] == 'q' else 1)
             limit = limit if limit > 0 else 1.0
             limits = {"vmin": -limit, "vmax": limit}
             if fluid["component"] in {"lambda2", "q"}:
@@ -195,8 +198,8 @@ def plot_exact_slice_from_ellipsoids(
                       color="black", edgecolor="black", linewidth=.2, width=.0025,
                       headwidth=3.5, headlength=4.5, minlength=0, zorder=5)
 
-    ax.set_xlabel(r"$x\,D_{\mathrm{Eq}}^{-1}$")
-    ax.set_ylabel(r"$y\,D_{\mathrm{Eq}}^{-1}$")
+    ax.set_xlabel(r"$x / D_{\mathrm{Eq}}$")
+    ax.set_ylabel(r"$y / D_{\mathrm{Eq}}$")
     tick_step = 2.5 if fluid_grid else 5
     ax.set_xticks(np.arange(np.ceil(xlim[0]/tick_step)*tick_step, xlim[1] + 1e-9, tick_step))
     ax.set_yticks(np.arange(np.ceil(ylim[0]/tick_step)*tick_step, ylim[1] + 1e-9, tick_step))
@@ -221,7 +224,12 @@ def plot_exact_slice_from_ellipsoids(
         bar.ax.xaxis.set_label_position("bottom")
     plotstyle.align_slice_legends(ax, legend_axes)
 
-    saved = save_figure(fig, out_path)
+    # Request a raster export as well as the helper's automatic SVG/PDF pair.
+    if out_path.suffix.lower() not in (".png", ".svg", ".pdf"):
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_path, dpi=600)
+    save_figure(fig, out_path.with_suffix(".png"))
+    saved = str(out_path)
     return {
         "output_path": saved,
         "area": reported_area,

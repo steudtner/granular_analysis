@@ -77,7 +77,7 @@ def run_spanwise_2d_analysis(
               linewidth=1.2, markersize=4, label="Porosität")
     _mean_std_band(axis, data["porosity"].mean(), data["porosity"].std(ddof=1), colour)
     axis.set(
-        xlabel=r"Spannrichtung, $z\,D_{\mathrm{Eq}}^{-1}$",
+        xlabel=r"Spannrichtung, $z / D_{\mathrm{Eq}}$",
         ylabel="Porosität, $\\phi$",
         title=rf"primeJainSU: Porosität über die Spannrichtung ($\alpha={alpha:g}$)",
         xlim=(0, lz),
@@ -99,7 +99,7 @@ def run_spanwise_2d_analysis(
         axis.set_ylabel(r"Fläche [$D_{\mathrm{Eq}}^2$]")
         axis.grid(True, alpha=0.3)
         axis.legend(loc="best")
-    axes[1].set(xlabel=r"Spannrichtung, $z\,D_{\mathrm{Eq}}^{-1}$", xlim=(0, lz))
+    axes[1].set(xlabel=r"Spannrichtung, $z / D_{\mathrm{Eq}}$", xlim=(0, lz))
     fig.suptitle(rf"primeJainSU: Schnittflächen über die Spannrichtung ($\alpha={alpha:g}$)")
     plotstyle.export_figure(fig, output_dir / "areas_over_z.png", dpi=200)
     plt.close(fig)

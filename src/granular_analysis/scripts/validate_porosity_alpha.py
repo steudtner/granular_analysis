@@ -45,7 +45,7 @@ def run_alpha_sweep(output):
         ax.set(title=rf'$\alpha={alpha:.1f}$',xlim=(-.6,2.6),ylim=(-.6,2.35))
         ax.set_aspect('equal')
     axes.flat[-1].axis('off')
-    fig.supxlabel(r'$x\,D_{\mathrm{eq}}^{-1}$'); fig.supylabel(r'$y\,D_{\mathrm{eq}}^{-1}$')
+    fig.supxlabel(r'$x / D_{\mathrm{eq}}$'); fig.supylabel(r'$y / D_{\mathrm{eq}}$')
     plotstyle.prepare_figure(fig); fig.tight_layout(); plotstyle.export_figure(fig, output/'alpha_shapes.png',dpi=160); plt.close(fig)
     write_appendix(frame)
     print(frame[frame.z_over_Deq==1].drop(columns='warnings').to_string(index=False))
@@ -60,7 +60,7 @@ def write_appendix(frame):
     equator['porosity_percent']=100*equator.porosity
     equator.to_csv(folder/'alpha_equator.csv',index=False)
     lines=[r'\begin{tabular}{rrrrl}',r'\hline',
-           r'$\alpha$ (Routine) & $\alpha D_{\mathrm{eq}}$ & $A_\alpha D_{\mathrm{eq}}^{-2}$ & $\varepsilon$ [\%] & Bewertung' + chr(92)*2,r'\hline']
+           r'$\alpha$ (Routine) & $\alpha D_{\mathrm{eq}}$ & $A_\alpha / D_{\mathrm{eq}}^{2}$ & $\varepsilon$ [\%] & Bewertung' + chr(92)*2,r'\hline']
     for row in equator.itertuples():
         values=[f'{row.alpha:.1f}',f'{row.alpha_Deq:.1f}',f'{row.A_alpha_over_Deq2:.6f}',f'{100*row.porosity:.6f}']
         lines.append(' & '.join(v.replace('.',',') for v in values)+' & '+('zulässig' if row.physical else 'ungültig')+chr(92)*2)

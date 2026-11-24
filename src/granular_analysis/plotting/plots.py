@@ -119,8 +119,8 @@ def plot_energy_time_series(df, out, use_normalized=False, potential_energy=Fals
     if use_normalized and "time_norm" in df.columns and "kinetic_energy_norm" in df.columns:
         x = df["time_norm"]
         y = df["kinetic_energy_norm"]
-        ax.set_xlabel(r"$t g^{1/2} D_{\mathrm{Eq}}^{-1/2}$", fontsize=10)
-        ax.set_ylabel(r"$\sum E_{kin} \,\rho^{-1} g^{-1} D_{\mathrm{Eq}}^{-4}$", fontsize=10)
+        ax.set_xlabel(r"$t / (D_{\mathrm{Eq}} / g)^{1/2}$", fontsize=10)
+        ax.set_ylabel(r"$\sum E_{kin}  / (g\rho D_{\mathrm{Eq}}^{4})$", fontsize=10)
         ax.set_title("Normalized kinetic energy over time", fontsize=10)
         """
          if len(y) > 0:
@@ -164,7 +164,7 @@ def plot_energy_components(df, out, use_normalized=False, potential_energy=False
     for ax, (key, label, color) in zip(axes, components):
         ax.plot(*energy_display_points(x, df[f"{key}_energy{suffix}"], smoothing_window, max_points),
                 color=color, linewidth=1.2)
-        ax.set_ylabel(label + (r" $E^*$" if normalized else " energy"))
+        ax.set_ylabel(label + (r" $E / (g\rho D_{\mathrm{Eq}}^{4})$" if normalized else " energy"))
         ax.grid(alpha=0.2)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
@@ -178,7 +178,7 @@ def plot_energy_components(df, out, use_normalized=False, potential_energy=False
     if max_points is not None:
         title += f"\nBinned means: up to {max_points} points/segment"
     fig.suptitle(title, fontsize=10)
-    axes[-1].set_xlabel(r"$t g^{1/2} D_{\mathrm{Eq}}^{-1/2}$" if normalized else "time")
+    axes[-1].set_xlabel(r"$t / (D_{\mathrm{Eq}} / g)^{1/2}$" if normalized else "time")
     plotstyle.prepare_figure(fig)
     fig.tight_layout(rect=(0, 0, 1, 0.96))
     plotstyle.export_figure(fig, out, dpi=300)
@@ -192,7 +192,7 @@ def plot_energy_ratio(df, out, use_normalized=False, smoothing_window=9, max_poi
     ax.plot(*energy_display_points(df["time_norm" if normalized else "time"],
             df["translational_rotational_ratio"], smoothing_window, max_points), linewidth=1.2)
     _energy_smoothing_note(ax, smoothing_window, max_points)
-    ax.set_xlabel(r"$t g^{1/2} D_{\mathrm{Eq}}^{-1/2}$" if normalized else "time")
+    ax.set_xlabel(r"$t / (D_{\mathrm{Eq}} / g)^{1/2}$" if normalized else "time")
     ax.set_ylabel(r"$\sum E_{\mathrm{trans}} / \sum E_{\mathrm{rot}}$")
     ax.axhline(1.0, color="gray", linestyle="--", label="Equal energies")
     ax.set_title("Translational / rotational energy over time")
@@ -210,7 +210,7 @@ def plot_energy_histogram(particle_energies, timestep_label, out_path, normaliza
     fig, ax = plt.subplots(figsize=(plotstyle.figwidth_full, 4))
     ax.hist(E_norm, bins=60)
     ax.set_yscale("log")
-    ax.set_xlabel(r"$E^* = E \,\rho^{-1} g^{-1} D_{eq}^{-4}$", fontsize=10)
+    ax.set_xlabel(r"$E^* = E  / (g\rho D_{eq}^{4})$", fontsize=10)
     ax.set_ylabel("count (log)", fontsize=10)
     ax.set_title(f"Normalized Energy Distribution\n{timestep_label}", fontsize=10)
     ax.grid(True, which="both")

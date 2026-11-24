@@ -27,8 +27,8 @@ def test_input_keeps_every_row_and_id(tmp_path):
     np.testing.assert_allclose(table.Sf, [1, .5, .25, 1/np.sqrt(8)])
     assert table.zingg_class.tolist() == ['equant','rod','disk','blade']
     result = plot_zingg(table, tmp_path/'zingg.svg')
-    assert '<svg' in result.read_text()
-    assert 'Corey Sf' in result.read_text()
+    assert '<text' not in result.read_text()
+    assert result.with_suffix('.pdf').is_file()
 
 
 @pytest.mark.parametrize('row', ['1,2500,1,0,1', '1,2500,1', '1,2500,bad,1,1', '1.5,2500,1,1,1'])

@@ -32,7 +32,7 @@ fig, axes = plt.subplots(3, 2, figsize=(plotstyle.figwidth_full, 7.4), sharex=Tr
 for ax, row in zip(axes.flat, fits.itertuples()):
     ax.scatter(points.x, points.z_max, s=8, color='black', label='Oberkante')
     ax.plot(np.fromstring(row.x_pred, sep=';'), np.fromstring(row.y_pred, sep=';'), label=row.model)
-    ax.set(xlabel=r'$x\,D_{\mathrm{eq}}^{-1}$', ylabel=r'Höhe $y\,D_{\mathrm{eq}}^{-1}$')
+    ax.set(xlabel=r'$x / D_{\mathrm{eq}}$', ylabel=r'Höhe $y / D_{\mathrm{eq}}$')
     ax.legend(loc='upper center', bbox_to_anchor=(.5, 1.24), ncol=2)
 plotstyle.save(fig, 'kap6_2_slope_higparmidfluid_modelle')
 plt.close(fig)
