@@ -65,6 +65,12 @@ python -m pip install -e ".[progress]"  # optional progress bars
 python -m pip install -e ".[dev]"       # optional test/development tools
 ```
 
+## Tests
+
+`python -m pytest -q` runs the full suite (252 tests, no simulation data
+needed). See `TESTS.md` for the module-by-module coverage, the testing
+philosophy, and how the CI handles optional pyvista dependencies.
+
 ## Quick start and automatic path detection
 
 `--path` is optional. When you start the command in a simulation case
