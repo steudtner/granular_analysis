@@ -12,8 +12,6 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -37,12 +35,12 @@ jobs:
       - name: Tests
         run: python -m pytest -q 2>&1 | tee pytest.log; exit ${PIPESTATUS[0]}
 
-      - name: Publish test log on failure
+      - name: Show test failures in job summary
         if: failure()
         run: |
-          git config user.name "ci-log-bot"
-          git config user.email "ci-log-bot@users.noreply.github.com"
-          git checkout --detach
-          git add -f pytest.log
-          git commit -m "CI test log for ${{ github.sha }}"
-          git push -f origin HEAD:ci-logs
+          {
+            echo "### pytest output (tail)"
+            echo '```'
+            tail -n 200 pytest.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
