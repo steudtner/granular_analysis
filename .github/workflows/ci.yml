@@ -38,9 +38,12 @@ jobs:
       - name: Show test failures in job summary
         if: failure()
         run: |
+          grep -E "^(FAILED|ERROR)" pytest.log | head -40 | while IFS= read -r line; do
+            echo "::error::$line"
+          done
           {
             echo "### pytest output (tail)"
             echo '```'
-            tail -n 200 pytest.log
+            tail -n 120 pytest.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
