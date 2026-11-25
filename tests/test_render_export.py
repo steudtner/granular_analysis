@@ -85,6 +85,7 @@ def test_svg_preserves_render_resolution(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("component,values", [("q", [-1, 0, 1, 100]), ("lambda2", [1, 0, -1, -100])])
 def test_log_vortex_colors(component, values):
+    pytest.importorskip('pyvista')
     from granular_analysis.plotting.particle_3d_plotter import _vortex_log_colors
     strength, limits = _vortex_log_colors(values, component)
     assert np.isnan(strength[:2]).all()
@@ -93,6 +94,7 @@ def test_log_vortex_colors(component, values):
 
 
 def test_log_vortex_empty_and_constant():
+    pytest.importorskip('pyvista')
     from granular_analysis.plotting.particle_3d_plotter import _vortex_log_colors
     for values in ([0, -1], [2, 2]):
         _, (low, high) = _vortex_log_colors(values, "q")

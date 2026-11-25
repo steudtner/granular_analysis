@@ -71,6 +71,7 @@ def test_camera_elevation_is_measured_above_xz(elevation):
 
 
 def test_video_volume_and_static_camera(monkeypatch, tmp_path):
+    pytest.importorskip('pyvista')
     from granular_analysis.paths import CasePaths
     from granular_analysis.scripts import run_renderview_video as video
     from granular_analysis.plotting import particle_3d_plotter
